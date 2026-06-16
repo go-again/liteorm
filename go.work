@@ -1,0 +1,27 @@
+go 1.25.7
+
+use (
+	.
+	./cmd/sqlc-gen-liteorm
+	./conformance
+	./dialect/mssql
+	./dialect/mysql
+	./dialect/postgres
+	./dialect/sqlite
+	./examples/blog
+	./examples/codegen
+	./examples/fixtures
+	./examples/gormport
+	./examples/logging
+	./examples/migrate
+	./examples/orm
+	./examples/queries
+	./examples/query
+	./examples/search
+	./gen
+	./studio
+	./studio/cmd/studio-demo
+	./studio/cmd/studio-demo-mysql
+	./studio/cmd/studio-demo-mssql
+	./studio/cmd/studio-demo-postgres
+)
