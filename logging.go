@@ -3,7 +3,7 @@ package liteorm
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -57,10 +57,13 @@ func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []an
 }
 
 // sourceDir is the directory of liteorm's own source tree (the dir of this
-// file), used to recognize and skip liteorm's own stack frames.
+// file), used to recognize and skip liteorm's own stack frames. The runtime
+// embeds source paths with forward slashes on every OS (including Windows), so
+// this uses path, not filepath — filepath.Dir would yield backslashes on Windows
+// and the HasPrefix checks below would never match.
 var sourceDir = func() string {
 	_, file, _, _ := runtime.Caller(0)
-	return filepath.Dir(file) + string(filepath.Separator)
+	return path.Dir(file) + "/"
 }()
 
 // caller returns the "file:line" of the first stack frame outside liteorm's own
@@ -92,5 +95,5 @@ func isUserFrame(file string) bool {
 	if strings.HasSuffix(file, "_test.go") {
 		return true // liteorm's own tests are the "user" of the API
 	}
-	return strings.HasPrefix(file, sourceDir+"examples"+string(filepath.Separator))
+	return strings.HasPrefix(file, sourceDir+"examples/")
 }

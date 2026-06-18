@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -16,6 +17,9 @@ import (
 // GenerateResponse from its stdout.
 func TestProcessPluginRoundtrip(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "sqlc-gen-liteorm")
+	if runtime.GOOS == "windows" {
+		bin += ".exe" // go build appends .exe on Windows; exec needs the same path
+	}
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build plugin: %v\n%s", err, out)
 	}

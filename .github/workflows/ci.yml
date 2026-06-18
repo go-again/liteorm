@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Newer pushes to the same branch/PR cancel older, still-running checks.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Full test suite across every workspace module, on the three platforms
+  # consumers build on, for the two most recent Go releases. The SQLite backend
+  # is pure Go (no C toolchain), so this runs everywhere unchanged. Live
+  # Postgres/MySQL/SQL Server scenarios self-skip without DSNs — they have their
+  # own job below.
+  test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.25.x', '1.26.x']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          go-version: ${{ matrix.go }}
+      - name: test every module
+        shell: bash
+        run: |
+          for m in $(bash .github/workflows/mods.sh); do
+            echo "::group::test $m"
+            (cd "$m" && go test -count=1 -timeout 5m ./...)
+            echo "::endgroup::"
+          done
+
+  # Race detector — linux/amd64 is enough; the locking surface is platform-
+  # independent Go. checkptr is disabled (-race enables it) because modernc.org/libc
+  # under gosqlite's SQLite engine does intentional pointer arithmetic over its
+  # simulated heap that checkptr false-flags; data-race detection stays on. Matches
+  # the `just test-race` recipe.
+  race:
+    name: race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: test -race every module
+        shell: bash
+        run: |
+          for m in $(bash .github/workflows/mods.sh); do
+            echo "::group::race $m"
+            (cd "$m" && go test -race -gcflags=all=-d=checkptr=0 -count=1 -timeout 10m ./...)
+            echo "::endgroup::"
+          done
+
+  # Static analysis — the same checks as `just lint` (gofmt, go vet,
+  # golangci-lint v2, gopls modernize), so CI and local lint stay identical.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: gofmt
+        shell: bash
+        run: |
+          out=$(gofmt -d $(find . -name '*.go' -not -path './.*/*'))
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+      - name: go vet
+        shell: bash
+        run: |
+          for m in $(bash .github/workflows/mods.sh); do
+            echo "::group::vet $m"; (cd "$m" && go vet ./...); echo "::endgroup::"
+          done
+      - name: golangci-lint
+        shell: bash
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.4.0
+          cfg="$PWD/.golangci.yml"
+          for m in $(bash .github/workflows/mods.sh); do
+            echo "::group::golangci-lint $m"
+            (cd "$m" && golangci-lint run --config "$cfg" --timeout 5m ./...)
+            echo "::endgroup::"
+          done
+      - name: gopls modernize
+        shell: bash
+        run: |
+          tool=golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest
+          fail=0
+          for m in $(bash .github/workflows/mods.sh); do
+            out=$( (cd "$m" && go run "$tool" ./... 2>&1) \
+              | grep -vE '^go: ' | grep -vE '^exit status' | grep -vE '\.(pb|gen)\.go:' || true )
+            if [ -n "$out" ]; then echo "## $m"; echo "$out"; fail=1; fi
+          done
+          [ "$fail" -eq 0 ]
+
+  # Smoke-test every runnable example (all SQLite-backed, no external services).
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: run examples
+        shell: bash
+        run: |
+          for ex in $(find examples -name main.go | sed 's|/main.go||' | sort); do
+            echo "::group::$ex"; (cd "$ex" && go run .); echo "::endgroup::"
+          done
+
+  # Live cross-dialect conformance: the same suite, run against real Postgres,
+  # MySQL, and SQL Server. The suite picks each dialect up from its DSN env var
+  # (skipping any that's unset). Mirrors `just db-up && just test-live`.
+  conformance-live:
+    name: conformance (live PG / MySQL / MSSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: liteorm
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: pw
+          MYSQL_DATABASE: liteorm
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -ppw"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+      mssql:
+        # azure-sql-edge is multi-arch and lighter than mssql/server; it has no
+        # built-in healthcheck, so the step below waits for it explicitly.
+        image: mcr.microsoft.com/azure-sql-edge:latest
+        env:
+          ACCEPT_EULA: '1'
+          MSSQL_SA_PASSWORD: 'Password123!'
+        ports: ['1433:1433']
+    env:
+      LITEORM_PG_DSN: postgres://postgres:pw@localhost:5432/liteorm?sslmode=disable
+      LITEORM_MYSQL_DSN: root:pw@tcp(localhost:3306)/liteorm?parseTime=true
+      LITEORM_MSSQL_DSN: sqlserver://sa:Password123!@localhost:1433?database=master&encrypt=disable
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: wait for SQL Server
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if (exec 3<>/dev/tcp/127.0.0.1/1433) 2>/dev/null; then
+              echo "port 1433 open"; break
+            fi
+            sleep 2
+          done
+          # azure-sql-edge accepts TCP a little before logins are ready.
+          sleep 20
+      - name: live conformance
+        run: cd conformance && go test -count=1 -timeout 12m ./...

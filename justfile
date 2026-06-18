@@ -47,11 +47,14 @@ test-one PATTERN:
 bench PKG="./...":
     @go test -run '^$' -bench . -benchmem {{ PKG }}
 
+# checkptr is disabled below: -race enables it, and modernc.org/libc (under
+# gosqlite's SQLite engine) does intentional pointer arithmetic over its simulated
+# heap that checkptr false-flags on every DB open. Data-race detection stays on.
 # Race-detector pass across every module.
 test-race:
     #!/usr/bin/env bash
     set -euo pipefail
-    for m in {{ mods }}; do (cd "$m" && go test -race -count=1 -timeout 5m ./...); done
+    for m in {{ mods }}; do (cd "$m" && go test -race -gcflags=all=-d=checkptr=0 -count=1 -timeout 5m ./...); done
 
 # fmt-check runs first — cheapest, and the most common local-only CI failure.
 
@@ -205,13 +208,13 @@ test-live:
     LITEORM_MSSQL_DSN="{{ mssql_dsn }}" \
     go test -count=1 -timeout 5m ./...
 
-# Same, with the race detector.
+# Same, with the race detector (checkptr disabled — see test-race).
 test-live-race:
     cd conformance && \
     LITEORM_PG_DSN="{{ pg_dsn }}" \
     LITEORM_MYSQL_DSN="{{ mysql_dsn }}" \
     LITEORM_MSSQL_DSN="{{ mssql_dsn }}" \
-    go test -race -count=1 -timeout 10m ./...
+    go test -race -gcflags=all=-d=checkptr=0 -count=1 -timeout 10m ./...
 
 # Run the orm suite (conformance/ormsuite) against each backend in turn — SQLite,
 

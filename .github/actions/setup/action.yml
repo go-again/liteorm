@@ -1,0 +1,16 @@
+name: setup
+description: Set up Go with module caching for the liteorm multi-module workspace.
+
+inputs:
+  go-version:
+    description: Go toolchain version.
+    default: '1.25.x'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        # Multi-module repo — key the cache off every module's go.sum.
+        cache-dependency-path: '**/go.sum'
