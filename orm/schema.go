@@ -11,6 +11,7 @@ package orm
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -188,13 +189,13 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 }
 
 func walkColumns(t reflect.Type, prefix []int, colPrefix string, s *Schema) {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
 		}
 		ft := sf.Type
-		idx := append(append([]int{}, prefix...), i)
+		idx := append(slices.Clone(prefix), i)
 		if ep, emb := scan.EmbeddedInfo(sf); emb {
 			et := ft
 			for et.Kind() == reflect.Pointer {
@@ -241,13 +242,13 @@ func addColumn(sf reflect.StructField, idx []int, colPrefix string, ci scan.Colu
 }
 
 func walkRelations(t reflect.Type, prefix []int, s *Schema) error {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
 		}
 		ft := sf.Type
-		idx := append(append([]int{}, prefix...), i)
+		idx := append(slices.Clone(prefix), i)
 		if _, emb := scan.EmbeddedInfo(sf); emb {
 			et := ft
 			for et.Kind() == reflect.Pointer {

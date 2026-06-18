@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ func (h *handler) Enabled(_ context.Context, l slog.Level) bool { return l >= h.
 
 func (h *handler) WithAttrs(as []slog.Attr) slog.Handler {
 	c := *h
-	c.attrs = append(append([]slog.Attr{}, h.attrs...), as...)
+	c.attrs = slices.Concat(h.attrs, as)
 	return &c
 }
 

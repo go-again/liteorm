@@ -3,6 +3,7 @@ package orm
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"liteorm.org/internal/scan"
 	"liteorm.org/query"
@@ -18,7 +19,7 @@ type Scope[T any] func(*query.SelectBuilder[T]) *query.SelectBuilder[T]
 // copied so sibling Repo views never alias each other's scope chain.
 func (r *Repo[T]) withScope(sc Scope[T]) *Repo[T] {
 	c := *r
-	c.readScopes = append(append([]Scope[T](nil), r.readScopes...), sc)
+	c.readScopes = append(slices.Clone(r.readScopes), sc)
 	return &c
 }
 
@@ -63,7 +64,7 @@ func (r *Repo[T]) Offset(n int) *Repo[T] {
 // over the query builder, so teams can package and share common filters.
 func (r *Repo[T]) Scopes(scopes ...Scope[T]) *Repo[T] {
 	c := *r
-	c.readScopes = append(append([]Scope[T](nil), r.readScopes...), scopes...)
+	c.readScopes = slices.Concat(r.readScopes, scopes)
 	return &c
 }
 

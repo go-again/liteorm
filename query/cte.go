@@ -1,6 +1,8 @@
 package query
 
 import (
+	"slices"
+
 	liteorm "liteorm.org"
 	"liteorm.org/dialect"
 	"liteorm.org/internal/sqlgen"
@@ -99,7 +101,7 @@ func (b *SelectBuilder[T]) joinSub(kind, alias string, sub Subquery, on string, 
 		lat = "LATERAL "
 	}
 	clause := kind + " " + lat + "(" + frag + ") AS " + string(d.QuoteIdent(nil, alias)) + " ON " + on
-	allArgs := append(append([]any{}, subArgs...), args...)
+	allArgs := slices.Concat(subArgs, args)
 	b.sel.Joins = append(b.sel.Joins, sqlgen.Expr{SQL: clause, Args: allArgs})
 	return b
 }

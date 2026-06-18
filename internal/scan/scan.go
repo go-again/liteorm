@@ -60,13 +60,13 @@ func buildPlan(t reflect.Type) *plan {
 	p := &plan{typ: t, byDB: map[string]int{}}
 	var walk func(rt reflect.Type, prefix []int, colPrefix string)
 	walk = func(rt reflect.Type, prefix []int, colPrefix string) {
-		for i := 0; i < rt.NumField(); i++ {
+		for i := range rt.NumField() {
 			sf := rt.Field(i)
 			if !sf.IsExported() {
 				continue
 			}
 			ft := sf.Type
-			idx := append(append([]int{}, prefix...), i)
+			idx := append(slices.Clone(prefix), i)
 			// Flatten embedded structs (anonymous, or named+`embedded`) with prefix.
 			if ep, emb := EmbeddedInfo(sf); emb {
 				et := ft

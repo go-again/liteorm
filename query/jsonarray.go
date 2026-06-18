@@ -2,6 +2,7 @@ package query
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"liteorm.org/dialect"
@@ -28,7 +29,7 @@ type JSONPath struct {
 // Key drills one level into an object. Chain Key calls to walk nested objects:
 // JSON("data").Key("address").Key("city").Eq("Paris").
 func (p JSONPath) Key(k string) JSONPath {
-	return JSONPath{col: p.col, keys: append(append([]string{}, p.keys...), k)}
+	return JSONPath{col: p.col, keys: append(slices.Clone(p.keys), k)}
 }
 
 // extractText renders the column walked to the path as TEXT: the inner keys use

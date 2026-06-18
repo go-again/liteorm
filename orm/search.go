@@ -263,7 +263,7 @@ func structFieldNames(t reflect.Type) map[string]bool {
 	out := map[string]bool{}
 	var walk func(reflect.Type)
 	walk = func(t reflect.Type) {
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			sf := t.Field(i)
 			if !sf.IsExported() {
 				continue
@@ -292,7 +292,7 @@ func searchIndexesFromTags(t reflect.Type) ([]SearchIndex, error) {
 	var out []SearchIndex
 	var walk func(reflect.Type) error
 	walk = func(t reflect.Type) error {
-		for i := 0; i < t.NumField(); i++ {
+		for i := range t.NumField() {
 			sf := t.Field(i)
 			if !sf.IsExported() {
 				continue

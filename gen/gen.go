@@ -52,7 +52,7 @@ func FromType[T any]() Model {
 }
 
 func walkFields(t reflect.Type, colPrefix string, m *Model) {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
