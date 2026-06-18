@@ -27,7 +27,7 @@ Other backends open the same way and return the same `*liteorm.DB`, so nothing b
 
 ## Your model type
 
-A model is a plain struct. The table name comes from a `TableName() string` method if you define one, otherwise it's the snake_case of the type name (no pluralization — explicit over implicit).
+A model is a plain struct. The table name comes from a `TableName() string` method if you define one, otherwise it's the snake_case of the type name — singular by default, or pluralized if you opt in with `orm.UsePluralTableNames(true)` (both front-ends share that one setting).
 
 ```go
 type Product struct {

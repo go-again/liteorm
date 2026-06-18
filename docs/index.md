@@ -30,7 +30,8 @@ New here? Start with **[Getting started](getting-started.md)**, then pick the fr
 
 **Backend-specific**
 
-- [SQLite search](guides/sqlite-search.md) — vector, full-text, and hybrid (reciprocal-rank-fusion) search; encryption at rest.
+- [SQLite search](guides/sqlite-search.md) — vector, full-text, and hybrid (reciprocal-rank-fusion) search.
+- [At-rest encryption](guides/encryption.md) — open an encrypted SQLite database; the on-disk file is ciphertext, readable only with the key.
 - [SQLite changesets](guides/sqlite-changeset.md) — capture, apply, invert, and concat changesets for audit and replication.
 - [Postgres](guides/postgres.md) — LISTEN/NOTIFY and the typed JSONB / array operators.
 

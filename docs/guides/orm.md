@@ -230,7 +230,7 @@ err := posts.Where("views > ?", 0).FindInBatches(ctx, 500, func(batch []Post) er
 
 LiteORM's declarative layer leans on convention, but every convention is the kind you can reason about:
 
-- **No pluralization.** The table name is your `TableName()` or the snake_case of the type — `Post` maps to `post`, not `posts`, unless you say so. Make it explicit with `TableName()`.
+- **No silent pluralization.** By default the table name is your `TableName()` or the snake_case of the type — `Post` maps to `post`, not `posts`. Want gorm-style plurals? Opt in once with `orm.UsePluralTableNames(true)` (`Post` → `posts`) and register any irregulars with `orm.RegisterPlural`; a per-type `TableName()` still wins over both.
 - **No lazy loading.** Associations are never fetched implicitly when you touch a field. You load them with one explicit, N+1-safe call — see [associations](associations.md).
 - **Hard errors over silent guesses.** A foreign key that can't be inferred, an unknown column, an ambiguous relation — these are returned errors, not best-effort SQL.
 - **Soft delete is opt-in and scoped.** A `soft_delete` field turns deletes into updates and excludes deleted rows from reads by default, with explicit scopes to see them — see [soft delete](soft-delete.md).

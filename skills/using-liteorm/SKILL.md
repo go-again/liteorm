@@ -67,7 +67,7 @@ _ = repo.Create(ctx, &u)
 got, _ := repo.Get(ctx, u.ID)
 ```
 
-A model is just a struct with a `TableName() string` method. No method ⇒ the table name is `snake_case(TypeName)` with no pluralization.
+A model is just a struct with a `TableName() string` method. No method ⇒ the table name is `snake_case(TypeName)`, singular by default (opt into plurals globally with `orm.UsePluralTableNames(true)`).
 
 ## Session & transactions
 
