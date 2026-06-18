@@ -133,7 +133,7 @@ func TestHybridFusion(t *testing.T) {
 	}
 
 	// Load fetches the model rows in fused order.
-	rows, err := search.LoadScored[Doc](ctx, db, fused)
+	rows, err := search.FetchScored[Doc](ctx, db, fused)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -132,17 +132,17 @@ For has-many/has-one, `Append` sets each target's FK to the owner; `Delete`/`Cle
 
 ## Hooks
 
-Implement the hook method on `*T`; a wrong signature is a compile error, not a dead hook. The `*orm.Op[T]` carries `Sess` (the executing session) and `Model` (`*T`). Returning an error aborts the operation.
+Implement the hook method on `*T`; a wrong signature is a compile error, not a dead hook. The `*orm.Event[T]` carries `Sess` (the executing session) and `Model` (`*T`). Returning an error aborts the operation.
 
 ```go
-func (p *Post) BeforeCreate(ctx context.Context, op *orm.Op[Post]) error {
-    if op.Model.Slug == "" { op.Model.Slug = slugify(op.Model.Title) }
+func (p *Post) BeforeCreate(ctx context.Context, ev *orm.Event[Post]) error {
+    if ev.Model.Slug == "" { ev.Model.Slug = slugify(ev.Model.Title) }
     return nil
 }
 var _ orm.BeforeCreateHook[Post] = (*Post)(nil) // optional compile-time assert
 ```
 
-Available: `BeforeCreate` / `AfterCreate`, `BeforeUpdate` / `AfterUpdate`, `BeforeDelete` / `AfterDelete` — each `(ctx, *orm.Op[T]) error`.
+Available: `BeforeCreate` / `AfterCreate`, `BeforeUpdate` / `AfterUpdate`, `BeforeDelete` / `AfterDelete` — each `(ctx, *orm.Event[T]) error`.
 
 ## Soft delete
 

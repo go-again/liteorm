@@ -120,8 +120,8 @@ type fkChild struct {
 
 func (fkChild) TableName() string { return "fk_children" }
 
-func (a *Account) BeforeCreate(_ context.Context, op *orm.Op[Account]) error {
-	op.Model.Note = "hooked"
+func (a *Account) BeforeCreate(_ context.Context, ev *orm.Event[Account]) error {
+	ev.Model.Note = "hooked"
 	return nil
 }
 
@@ -820,7 +820,7 @@ func ormScenarios(t *testing.T, db *liteorm.DB) {
 		}
 		// Idempotent: a second migrate of the same model must not error (no duplicate).
 		if err := orm.AutoMigrate[widgetIndexed](ctx, db); err != nil {
-			t.Errorf("re-migrate should be a no-op, got %v", err)
+			t.Errorf("re-migrate should be a no-ev, got %v", err)
 		}
 	})
 

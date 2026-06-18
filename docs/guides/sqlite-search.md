@@ -1,46 +1,72 @@
 # SQLite search
 
-The `liteorm.org/dialect/sqlite/search` package adds vector nearest-neighbour, full-text, and hybrid search to LiteORM's SQLite backend. These features are SQLite-only and capability-gated: every constructor takes a `liteorm.Session` opened by `liteorm.org/dialect/sqlite` and returns `search.ErrUnsupportedBackend` for any other dialect.
+The `liteorm.org/dialect/sqlite/search` package adds vector nearest-neighbour, full-text, and hybrid search to LiteORM's SQLite backend. These features are SQLite-only and capability-gated: the typed helpers and constructors take a `liteorm.Session` opened by `liteorm.org/dialect/sqlite` and return `search.ErrUnsupportedBackend` for any other dialect.
 
-The model is a sidecar index. Your table owns the rows; a vector or full-text index owns the embeddings or terms; your model's `int64` primary key ties them together. A search returns ranked keys (optionally with scores); `search.Load` fetches the model rows by key, preserving rank order. The recipe is the same whether you search by vector, by text, or by both.
+Every index is a *sidecar*: your table owns the rows, an FTS5 or vec0 table owns the terms or embeddings, and your model's `int64` primary key ties them together. There are two ways to drive that sidecar. The **declarative** layer (recommended) declares the index on the model and lets `AutoMigrate` provision it and keep it in sync; the **low-level** layer drives the sidecar by hand for callers that own its lifecycle.
 
-## Vector search
+## Declarative search (recommended)
 
-`search.NewVector` creates (idempotently) or opens a fixed-dimension vector table with a distance metric. Add embeddings keyed by your primary key, then query for the nearest neighbours.
+Declare the indexes on the model and let `orm.AutoMigrate` own the rest: it creates the FTS5/vec0 sidecar tables and the triggers (or ORM hooks) that keep them current, so ordinary `Repo.Create`/`Update`/`Delete` need no index bookkeeping.
 
 ```go
-import "liteorm.org/dialect/sqlite/search"
-
-v, err := search.NewVector(ctx, db, "doc_vecs", dim, search.Cosine)
-if err != nil {
-	return err
+type Article struct {
+	ID        int64
+	Title     string
+	Body      string
+	Embedding []float32 `orm:"-"` // sidecar-only (not a base-table column)
 }
-v.Add(ctx, doc.ID, embedding) // embedding is []float32; re-adding a key replaces it
 
-keys, err := v.Search(ctx, queryEmbedding, 5) // 5 nearest keys, nearest first
-docs, err := search.Load[Doc](ctx, db, keys)  // fetch rows in ranked order
+func (Article) SearchIndexes() []orm.SearchIndex {
+	return []orm.SearchIndex{
+		orm.FullText("Title", "Body"),
+		orm.Vector("Embedding", 384).WithMetric(orm.Cosine),
+	}
+}
 ```
 
-The metrics are `search.Cosine` (the usual choice for normalized text embeddings), `search.L2` (the default), `search.L1`, and `search.Hamming` (bit vectors). To inspect distances, use `SearchScored`, which reports each neighbour's raw distance (smaller is nearer):
+`AutoMigrate[Article]` then provisions `articles`, `articles_fts`, and `articles_vec`; from there a plain write keeps every index current:
 
 ```go
-scored, err := v.SearchScored(ctx, queryEmbedding, 5) // []search.Scored{Key, Score}
-docs, err := search.LoadScored[Doc](ctx, db, scored)
+orm.AutoMigrate[Article](ctx, db)
+repo := orm.NewRepo[Article](db)
+repo.Create(ctx, &Article{Title: "…", Body: "…", Embedding: vec}) // both sidecars sync automatically
 ```
 
-## Full-text search
-
-`search.NewFullText` creates or opens an FTS5 index over a text column, with the default tokenizer and BM25 ranking. Index text under a key, then query with the builder API.
+Search with the typed searcher `search.For[T](db)`, whose `.Vector` / `.FullText` / `.Hybrid` methods return your models in ranked order:
 
 ```go
-f, err := search.NewFullText(ctx, db, "doc_fts")
-f.Add(ctx, doc.ID, doc.Title+" "+doc.Body) // re-adding a key replaces it
+near, _  := search.For[Article](db).Vector(ctx, queryVec, 5)
+hits, _  := search.For[Article](db).FullText(ctx, search.Term("rocket"), 5)
+fused, _ := search.For[Article](db).Hybrid(ctx, queryVec, search.Term("rocket"), 5)
 
-keys, err := f.Search(ctx, search.Term("rocket"), 5) // best (BM25) rank first
-docs, err := search.Load[Doc](ctx, db, keys)
+for _, h := range near {
+	// h.Score is the vector distance for .Vector, the BM25 rank for .FullText, and
+	// the reciprocal-rank-fusion score for .Hybrid.
+	fmt.Println(h.Model.Title, h.Score)
+}
 ```
 
-Queries are built compositionally — there is no raw match-string parsing to get wrong:
+Soft-deleted rows drop out of results automatically — the searcher loads through the ORM, which honors the soft-delete scope. When a model declares more than one index of the same kind, pick one with `search.For[Article](db).Field("FieldName")`.
+
+### Declaring indexes: method or tags
+
+Both front-ends lower to the same `orm.SearchIndex`:
+
+- A `SearchIndexes() []orm.SearchIndex` method is the typed, full-power form — multi-column full-text, per-column BM25 weights (`WithWeights`), and the tokenizer/prefix/detail options.
+- Struct tags cover the common single-field case: `vec:"dim=384;metric=cosine"` on the embedding field, or `fts:"tokenize=porter unicode61"` on a text field. (`fts5:` is accepted as an alias.)
+
+When both are present, the method wins on a sidecar-name collision.
+
+### How writes stay in sync
+
+Each index syncs one of two ways, set with `.WithSync(...)` or left to the default:
+
+- **Triggers** — SQL `AFTER INSERT/UPDATE/DELETE` triggers maintain the sidecar, so *every* write stays indexed: bulk inserts and raw `query` writes that never touch the ORM included. This is the default for full-text (the indexed text already lives on the base table, so it costs nothing) and for a vector whose embedding is a stored column.
+- **Hooks** — the ORM write path maintains the sidecar. This is the default for a vector whose embedding is sidecar-only (`orm:"-"`, so the vector is not duplicated on the base table); writes that bypass the ORM are not indexed.
+
+## Query builders
+
+Full-text queries are built compositionally — there is no raw match-string parsing to get wrong. The same builders feed both the searcher's `.FullText` and the low-level `FullText.Search`:
 
 ```go
 search.Term("rocket")                                   // a single term
@@ -52,23 +78,30 @@ search.Not(search.Term("space"), search.Term("opera"))  // "space" but not "oper
 search.Near(3, "rocket", "engine")                      // terms within 3 of each other
 ```
 
-## Hybrid search
+The vector metrics are `orm.Cosine` (the usual choice for normalized embeddings), `orm.L2` (the default), `orm.L1`, and `orm.Hamming` (bit vectors).
 
-`search.Hybrid` runs a vector KNN *and* a full-text query, then fuses the two rankings with reciprocal rank fusion. A key that ranks well in either modality surfaces; one that ranks well in both rises highest — without tuning a brittle score-scale blend. The result is ordered by descending fusion score (larger is better).
+## Low-level building blocks
+
+When you manage the index lifecycle yourself — no model, or a sidecar you provision and backfill on your own schedule — the constructors give you direct handles. `NewVector` and `NewFullText` create (idempotently) or open a sidecar; `Add` upserts a row keyed by your primary key; `Search` returns ranked keys and `Load` fetches the model rows in that order.
 
 ```go
-fused, err := search.Hybrid(ctx, v, f, queryEmbedding, search.Term("software"), 5)
-docs, err := search.LoadScored[Doc](ctx, db, fused)
-for i, d := range docs {
-	fmt.Printf("%.4f  %s\n", fused[i].Score, d.Title)
-}
+v, _ := search.NewVector(ctx, db, "doc_vecs", dim, search.Cosine)
+v.Add(ctx, doc.ID, embedding)                  // []float32; re-adding a key replaces it
+keys, _ := v.Search(ctx, queryEmbedding, 5)    // 5 nearest keys, nearest first
+docs, _ := search.Fetch[Doc](ctx, db, keys)    // rows in ranked order
+
+f, _ := search.NewFullText(ctx, db, "doc_fts")
+f.Add(ctx, doc.ID, doc.Title+" "+doc.Body)
+keys, _ = f.Search(ctx, search.Term("rocket"), 5)
 ```
 
-`Hybrid` takes optional fusion knobs — `search.WithK` (the RRF damping constant) and `search.WithWeights` (weighting the vector and full-text rankings, in that order).
+`SearchScored` reports each vector neighbour's raw distance (smaller is nearer), and `search.Hybrid` fuses an explicit `Vector` and `FullText` with reciprocal rank fusion — the same fusion `Fuse` runs, on handles you hold yourself. `Hybrid` and `Fuse` take optional knobs: `search.WithK` (the RRF damping constant) and `search.WithWeights` (weighting the vector and full-text rankings, in that order).
+
+`OpenVector` and `OpenFullText` attach to an already-provisioned sidecar (the shape `AutoMigrate` creates) without re-creating it — the read-path counterparts to the `New*` constructors.
 
 ## See also
 
-- `examples/search` — vector, full-text, and hybrid search end to end.
+- `examples/search` — the declarative path and the low-level building blocks, end to end.
 - [SQLite changeset](sqlite-changeset.md) — the other SQLite-only extension.
 - [Backends reference](../reference/backends.md) — the SQLite backend, how to open it, and at-rest encryption.
 - Full API: [`liteorm.org/dialect/sqlite/search`](https://pkg.go.dev/liteorm.org/dialect/sqlite/search) and [`liteorm.org/dialect/sqlite`](https://pkg.go.dev/liteorm.org/dialect/sqlite).

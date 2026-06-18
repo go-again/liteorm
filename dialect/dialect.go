@@ -141,6 +141,81 @@ type ForeignKeyIntrospector interface {
 	ForeignKeysQuery() string
 }
 
+// SearchKind distinguishes the sidecar kinds a [SearchProvisioner] builds.
+type SearchKind int
+
+const (
+	// SearchFullText is a full-text sidecar (e.g. SQLite FTS5).
+	SearchFullText SearchKind = iota
+	// SearchVector is a nearest-neighbour vector sidecar (e.g. sqlite-vec vec0).
+	SearchVector
+)
+
+// SearchSpec is a dialect-neutral description of one search sidecar, resolved
+// from a model's declared index (columns already mapped to their SQL names). It
+// is the hand-off type between the orm front-end and a [SearchProvisioner]
+// backend, so the dialect package needs no dependency on orm.
+type SearchSpec struct {
+	Kind     SearchKind
+	Name     string   // sidecar table name
+	Table    string   // base table the sidecar mirrors
+	Columns  []string // indexed columns (text columns for full-text; the embedding column for vector)
+	PKColumn string   // base-table primary-key column the sidecar is keyed by
+	PKType   string   // canonical Go type of the PK ("int64", "string", …)
+	Sync     string   // resolved sync strategy: "triggers" or "hooks"
+
+	// Full-text options.
+	Tokenizer string
+	Prefix    []int
+	Detail    string // "full" | "column" | "none"
+	Content   string // "external" (default) | "intable" | "contentless"
+
+	// Vector options.
+	Dim      int
+	Metric   string // distance token: "l2" | "cosine" | "l1" | "hamming"
+	Encoding string // "float32" (default) | "int8" | "bit"
+}
+
+// RowidKeyed reports whether the sidecar is keyed by the table's implicit integer
+// rowid — true for any integer primary key (int, int32, uint, …, not just int64),
+// since SQLite aliases an integer PK to the rowid. A non-integer PK (e.g. string)
+// is keyed by an explicit key column instead.
+func (s SearchSpec) RowidKeyed() bool {
+	switch s.PKType {
+	case "int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64":
+		return true
+	}
+	return false
+}
+
+// SearchProvisioner is an optional capability: a backend that supports search
+// sidecars (full-text / vector) returns the DDL to create or drop one. The
+// methods only build SQL — the caller (orm's AutoMigrate) executes it — so the
+// dialect stays free of any session or orm dependency. Creation DDL must be
+// idempotent (IF NOT EXISTS); drop DDL must tolerate a missing sidecar.
+type SearchProvisioner interface {
+	ProvisionSearchSQL(spec SearchSpec) ([]string, error)
+	DropSearchSQL(spec SearchSpec) ([]string, error)
+}
+
+// SearchStmt is one SQL statement plus its bind arguments, produced by a
+// [SearchRowSyncer] to maintain a sidecar for a single row.
+type SearchStmt struct {
+	SQL  string
+	Args []any
+}
+
+// SearchRowSyncer is an optional capability for keeping a hook-synced sidecar in
+// step from the ORM write path — used when a sidecar is not trigger-synced (e.g.
+// a vector whose embedding is sidecar-only, not a stored base column). value
+// carries the indexed payload for the row: a vector embedding as []float32, or a
+// pre-encoded []byte.
+type SearchRowSyncer interface {
+	UpsertSearchRowSQL(spec SearchSpec, key any, value any) ([]SearchStmt, error)
+	DeleteSearchRowSQL(spec SearchSpec, key any) ([]SearchStmt, error)
+}
+
 // Dialect is the contract each backend implements. AppendPlaceholder is an
 // explicit, position-aware bind-var writer (sqlite/mysql -> "?", pg -> "$n",
 // mssql -> "@pN"), so a generics-first builder emits the right placeholder

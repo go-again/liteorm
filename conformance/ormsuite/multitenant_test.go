@@ -23,10 +23,10 @@ type Doc struct {
 func (Doc) TableName() string { return "docs" }
 
 // BeforeCreate stamps the tenant from context when the caller left it unset.
-func (d *Doc) BeforeCreate(ctx context.Context, op *orm.Op[Doc]) error {
-	if op.Model.TenantID == 0 {
+func (d *Doc) BeforeCreate(ctx context.Context, ev *orm.Event[Doc]) error {
+	if ev.Model.TenantID == 0 {
 		if tid, ok := tenantFrom(ctx); ok {
-			op.Model.TenantID = tid
+			ev.Model.TenantID = tid
 		}
 	}
 	return nil

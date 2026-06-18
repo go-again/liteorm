@@ -60,11 +60,6 @@ type Tx interface {
 	Rollback(ctx context.Context) error
 }
 
-// Queryer is the minimal read surface, so helpers can stay decoupled from *DB.
-type Queryer interface {
-	QueryContext(ctx context.Context, query string, args ...any) (Rows, error)
-}
-
 // Session is a query-executing handle that knows its dialect and logger: both
 // *DB and *BoundTx satisfy it, so the front-ends work identically on a
 // connection or inside a transaction.

@@ -123,7 +123,7 @@ func TestJoinsUnionSubquery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !contains(q, `FROM "users" LEFT JOIN "orders" ON orders.user_id = users.id WHERE "age" > ?`) {
+		if !strings.Contains(q, `FROM "users" LEFT JOIN "orders" ON orders.user_id = users.id WHERE "age" > ?`) {
 			t.Errorf("join sql: %s", q)
 		}
 	})
@@ -136,7 +136,7 @@ func TestJoinsUnionSubquery(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := `WHERE "age" < $1 UNION SELECT "users"."id", "users"."name", "users"."age", "users"."email" FROM "users" WHERE "age" > $2 ORDER BY name`
-		if !contains(q, want) {
+		if !strings.Contains(q, want) {
 			t.Errorf("union sql: %s", q)
 		}
 		if len(args) != 2 || args[0] != 18 || args[1] != 65 {
@@ -151,7 +151,7 @@ func TestJoinsUnionSubquery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !contains(q, "UNION ALL SELECT") {
+		if !strings.Contains(q, "UNION ALL SELECT") {
 			t.Errorf("union all sql: %s", q)
 		}
 	})
@@ -164,7 +164,7 @@ func TestJoinsUnionSubquery(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := `WHERE "id" IN (SELECT id FROM "docs" WHERE "data" = $1)`
-		if !contains(q, want) {
+		if !strings.Contains(q, want) {
 			t.Errorf("in-subquery sql: %s", q)
 		}
 		if len(args) != 1 || args[0] != "x" {
@@ -180,7 +180,7 @@ func TestJoinsUnionSubquery(t *testing.T) {
 			t.Fatal(err)
 		}
 		// the outer name=$1 must precede the (argument-less) EXISTS body
-		if !contains(q, `WHERE "name" = $1 AND EXISTS (SELECT 1 FROM "docs" WHERE docs.id = users.id)`) {
+		if !strings.Contains(q, `WHERE "name" = $1 AND EXISTS (SELECT 1 FROM "docs" WHERE docs.id = users.id)`) {
 			t.Errorf("exists sql: %s", q)
 		}
 		if len(args) != 1 || args[0] != "ada" {
@@ -204,8 +204,6 @@ func TestJoinsUnionSubquery(t *testing.T) {
 		}
 	})
 }
-
-func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestEmptyPredicateEdgeCases(t *testing.T) {
 	sess := mockSession{d: sqlgen.SQLite}

@@ -168,8 +168,8 @@ func (r *Repo[T]) Create(ctx context.Context, v *T) error {
 	if err != nil {
 		return err
 	}
-	op := &Op[T]{Sess: r.sess, Model: v}
-	if err := fireBeforeCreate(ctx, op); err != nil {
+	ev := &Event[T]{Sess: r.sess, Model: v}
+	if err := fireBeforeCreate(ctx, ev); err != nil {
 		return err
 	}
 	setAutoTimes(s, v, true)
@@ -178,7 +178,7 @@ func (r *Repo[T]) Create(ctx context.Context, v *T) error {
 	if err := query.InsertCapturingPK(ctx, r.sess, ins, v); err != nil {
 		return err
 	}
-	return fireAfterCreate(ctx, op)
+	return fireAfterCreate(ctx, ev)
 }
 
 // Get fetches the row whose primary key equals the given key (honoring the
@@ -271,8 +271,8 @@ func (r *Repo[T]) Update(ctx context.Context, v *T) error {
 	if len(s.PKs) == 0 {
 		return fmt.Errorf("orm: type %T has no primary key", *v)
 	}
-	op := &Op[T]{Sess: r.sess, Model: v}
-	if err := fireBeforeUpdate(ctx, op); err != nil {
+	ev := &Event[T]{Sess: r.sess, Model: v}
+	if err := fireBeforeUpdate(ctx, ev); err != nil {
 		return err
 	}
 	setAutoTimes(s, v, false)
@@ -296,11 +296,11 @@ func (r *Repo[T]) Update(ctx context.Context, v *T) error {
 		return err
 	}
 	// A keyed update that matched no row (a wrong PK, or a soft-deleted row that is
-	// out of the current scope) is ErrNoRows, not a silent no-op.
+	// out of the current scope) is ErrNoRows, not a silent no-ev.
 	if res.RowsAffected() == 0 {
 		return liteorm.ErrNoRows
 	}
-	return fireAfterUpdate(ctx, op)
+	return fireAfterUpdate(ctx, ev)
 }
 
 // Delete removes v: a soft delete (UPDATE deleted_at = now) when the model has a
@@ -323,8 +323,8 @@ func (r *Repo[T]) delete(ctx context.Context, v *T, force bool) error {
 	if len(s.PKs) == 0 {
 		return fmt.Errorf("orm: type %T has no primary key", *v)
 	}
-	op := &Op[T]{Sess: r.sess, Model: v}
-	if err := fireBeforeDelete(ctx, op); err != nil {
+	ev := &Event[T]{Sess: r.sess, Model: v}
+	if err := fireBeforeDelete(ctx, ev); err != nil {
 		return err
 	}
 	where := r.pkWhere(s, v)
@@ -360,9 +360,14 @@ func (r *Repo[T]) delete(ctx context.Context, v *T, force bool) error {
 		return err
 	}
 	// A keyed delete that matched no row (a wrong PK, or an already-deleted row out
-	// of the current scope) is ErrNoRows, not a silent no-op.
+	// of the current scope) is ErrNoRows, not a silent no-ev.
 	if res.RowsAffected() == 0 {
 		return liteorm.ErrNoRows
 	}
-	return fireAfterDelete(ctx, op)
+	if force || s.SoftDelete == nil { // a hard delete removes the row from hook-synced sidecars too
+		if err := syncSearchDelete(ctx, r.sess, s, v); err != nil {
+			return err
+		}
+	}
+	return fireAfterDelete(ctx, ev)
 }

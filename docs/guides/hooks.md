@@ -14,12 +14,12 @@ There are six hook points, one before and one after each write operation:
 | `Update` | `BeforeUpdate` | `AfterUpdate` |
 | `Delete` | `BeforeDelete` | `AfterDelete` |
 
-Every hook has the same signature, taking a `context.Context` and a typed `*orm.Op[T]`, and returning an `error`:
+Every hook has the same signature, taking a `context.Context` and a typed `*orm.Event[T]`, and returning an `error`:
 
 ```go
-func (p *Post) BeforeCreate(ctx context.Context, op *orm.Op[Post]) error {
-	if op.Model.Slug == "" {
-		op.Model.Slug = slugify(op.Model.Title)
+func (p *Post) BeforeCreate(ctx context.Context, ev *orm.Event[Post]) error {
+	if ev.Model.Slug == "" {
+		ev.Model.Slug = slugify(ev.Model.Title)
 	}
 	return nil
 }
@@ -29,16 +29,16 @@ Implement only the hooks you need. The repository checks once per type which hoo
 
 ## The Op handle
 
-`orm.Op[T]` is the narrow, explicit handle passed to every hook. It carries exactly two things:
+`orm.Event[T]` is the narrow, explicit handle passed to every hook. It carries exactly two things:
 
-- `op.Model` — the typed `*T` being written. Mutate it in a `Before*` hook to change what gets persisted (the slug example above), or read it in an `After*` hook.
-- `op.Sess` — the executing `liteorm.Session`. When the write runs inside a transaction, this is that transaction, so anything you do through it commits or rolls back atomically with the write — see [transactions](transactions.md).
+- `ev.Model` — the typed `*T` being written. Mutate it in a `Before*` hook to change what gets persisted (the slug example above), or read it in an `After*` hook.
+- `ev.Sess` — the executing `liteorm.Session`. When the write runs inside a transaction, this is that transaction, so anything you do through it commits or rolls back atomically with the write — see [transactions](transactions.md).
 
 ```go
-func (p *Post) AfterCreate(ctx context.Context, op *orm.Op[Post]) error {
-	// op.Sess is the same session (or tx) the Create ran on.
-	return orm.NewRepo[AuditEntry](op.Sess).
-		Create(ctx, &AuditEntry{Action: "post.created", PostID: op.Model.ID})
+func (p *Post) AfterCreate(ctx context.Context, ev *orm.Event[Post]) error {
+	// ev.Sess is the same session (or tx) the Create ran on.
+	return orm.NewRepo[AuditEntry](ev.Sess).
+		Create(ctx, &AuditEntry{Action: "post.created", PostID: ev.Model.ID})
 }
 ```
 
@@ -49,8 +49,8 @@ In an `AfterCreate` hook the model's generated primary key is already populated,
 A hook that returns a non-nil error stops the write. A `Before*` error aborts before any SQL runs; an `After*` error surfaces from the repository call after the row was written — inside a transaction you'd roll back. Errors are never swallowed, so a failed validation in `BeforeCreate` reliably prevents the insert:
 
 ```go
-func (u *User) BeforeCreate(ctx context.Context, op *orm.Op[User]) error {
-	if op.Model.Email == "" {
+func (u *User) BeforeCreate(ctx context.Context, ev *orm.Event[User]) error {
+	if ev.Model.Email == "" {
 		return fmt.Errorf("user: email is required")
 	}
 	return nil
@@ -76,5 +76,5 @@ This is the recommended pattern for every hook you implement.
 ## Where to next
 
 - [The orm front-end](orm.md) — the repository whose writes fire these hooks.
-- [Transactions](transactions.md) — `op.Sess` is the tx your hook runs in.
+- [Transactions](transactions.md) — `ev.Sess` is the tx your hook runs in.
 - [Soft delete](soft-delete.md) — `BeforeDelete` / `AfterDelete` fire on soft deletes too.

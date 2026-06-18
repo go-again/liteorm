@@ -58,9 +58,9 @@ type Post struct {
 func (Post) TableName() string { return "posts" }
 
 // BeforeCreate derives the URL slug from the title when one isn't set.
-func (p *Post) BeforeCreate(_ context.Context, op *orm.Op[Post]) error {
-	if op.Model.Slug == "" {
-		op.Model.Slug = slugify(op.Model.Title)
+func (p *Post) BeforeCreate(_ context.Context, ev *orm.Event[Post]) error {
+	if ev.Model.Slug == "" {
+		ev.Model.Slug = slugify(ev.Model.Title)
 	}
 	return nil
 }

@@ -18,12 +18,12 @@ type Hooked struct {
 func (Hooked) TableName() string { return "hooked" }
 
 // BeforeCreate derives a slug; returning an error from a hook aborts the write.
-func (h *Hooked) BeforeCreate(_ context.Context, op *orm.Op[Hooked]) error {
-	if op.Model.Name == "boom" {
+func (h *Hooked) BeforeCreate(_ context.Context, ev *orm.Event[Hooked]) error {
+	if ev.Model.Name == "boom" {
 		return errors.New("hook abort")
 	}
-	if op.Model.Slug == "" {
-		op.Model.Slug = "slug-" + op.Model.Name
+	if ev.Model.Slug == "" {
+		ev.Model.Slug = "slug-" + ev.Model.Name
 	}
 	return nil
 }

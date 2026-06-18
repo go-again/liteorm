@@ -1,6 +1,9 @@
 package sqlgen
 
 import (
+	"encoding/binary"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -77,6 +80,211 @@ func (sqliteDialect) ForeignKeysQuery() string {
 	return `SELECT m.name AS tbl, fk."from" AS from_col, fk."table" AS ref_table, fk."to" AS ref_col
 FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) fk
 WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'`
+}
+
+// ProvisionSearchSQL builds the CREATE VIRTUAL TABLE for a search sidecar — an
+// FTS5 table for full-text, a sqlite-vec vec0 table for vector — keyed by the
+// base table's primary key, plus the AFTER INSERT/UPDATE/DELETE triggers that
+// keep it in sync when Sync is "triggers" (FTS external-content always; vectors
+// when the embedding is a stored column). Idempotent via IF NOT EXISTS.
+func (d sqliteDialect) ProvisionSearchSQL(spec dialect.SearchSpec) ([]string, error) {
+	switch spec.Kind {
+	case dialect.SearchVector:
+		stmts := []string{d.vec0CreateSQL(spec)}
+		if spec.Sync == "triggers" {
+			stmts = append(stmts, d.vecTriggerSQL(spec)...)
+		}
+		return stmts, nil
+	case dialect.SearchFullText:
+		if !d.ftsExternal(spec) {
+			// Only external-content FTS5 is sync-wired (its triggers mirror the base
+			// table). Refuse other content modes rather than create a sidecar that
+			// silently never updates.
+			return nil, fmt.Errorf("sqlite: full-text content=%q is not supported yet — only external content is kept in sync", spec.Content)
+		}
+		return append([]string{d.fts5CreateSQL(spec)}, d.ftsTriggerSQL(spec)...), nil
+	}
+	return nil, fmt.Errorf("sqlite: unknown search kind %d", spec.Kind)
+}
+
+// DropSearchSQL drops a search sidecar and its sync triggers (idempotent).
+func (d sqliteDialect) DropSearchSQL(spec dialect.SearchSpec) ([]string, error) {
+	var stmts []string
+	for _, suffix := range []string{"_ai", "_au", "_ad"} {
+		stmts = append(stmts, "DROP TRIGGER IF EXISTS "+string(d.QuoteIdent(nil, spec.Name+suffix)))
+	}
+	stmts = append(stmts, "DROP TABLE IF EXISTS "+string(d.QuoteIdent(nil, spec.Name)))
+	return stmts, nil
+}
+
+func (d sqliteDialect) ftsExternal(spec dialect.SearchSpec) bool {
+	return spec.Content == "" || spec.Content == "external"
+}
+
+// vecKeyToken is the SQL token a vec0 sidecar is keyed by: the implicit "rowid"
+// for an int64 primary key, else the explicit (quoted) key column.
+func (d sqliteDialect) vecKeyToken(spec dialect.SearchSpec) string {
+	if !spec.RowidKeyed() {
+		return string(d.QuoteIdent(nil, spec.PKColumn))
+	}
+	return "rowid"
+}
+
+// UpsertSearchRowSQL replaces one row's embedding in a hook-synced vec0 sidecar
+// (DELETE then INSERT — vec0's portable replace). DeleteSearchRowSQL removes it.
+func (d sqliteDialect) UpsertSearchRowSQL(spec dialect.SearchSpec, key any, value any) ([]dialect.SearchStmt, error) {
+	if spec.Kind != dialect.SearchVector {
+		return nil, fmt.Errorf("sqlite: hook-mode sync is implemented for vector sidecars only")
+	}
+	blob, err := vecBlob(value)
+	if err != nil {
+		return nil, err
+	}
+	name, keyCol := string(d.QuoteIdent(nil, spec.Name)), d.vecKeyToken(spec)
+	return []dialect.SearchStmt{
+		{SQL: "DELETE FROM " + name + " WHERE " + keyCol + " = ?", Args: []any{key}},
+		{SQL: "INSERT INTO " + name + "(" + keyCol + ", embedding) VALUES (?, ?)", Args: []any{key, blob}},
+	}, nil
+}
+
+func (d sqliteDialect) DeleteSearchRowSQL(spec dialect.SearchSpec, key any) ([]dialect.SearchStmt, error) {
+	name, keyCol := string(d.QuoteIdent(nil, spec.Name)), d.vecKeyToken(spec)
+	return []dialect.SearchStmt{
+		{SQL: "DELETE FROM " + name + " WHERE " + keyCol + " = ?", Args: []any{key}},
+	}, nil
+}
+
+// vecBlob encodes an embedding into sqlite-vec's compact little-endian float32
+// blob, or passes a pre-encoded []byte through unchanged.
+func vecBlob(value any) ([]byte, error) {
+	switch v := value.(type) {
+	case []byte:
+		return v, nil
+	case []float32:
+		b := make([]byte, len(v)*4)
+		for i, x := range v {
+			binary.LittleEndian.PutUint32(b[i*4:], math.Float32bits(x))
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("sqlite: vector embedding must be []float32 or []byte, got %T", value)
+}
+
+// ftsTriggerSQL builds the standard FTS5 external-content sync triggers: insert
+// mirrors the new row, delete emits the FTS5 'delete' command, update does both.
+func (d sqliteDialect) ftsTriggerSQL(spec dialect.SearchSpec) []string {
+	qi := func(s string) string { return string(d.QuoteIdent(nil, s)) }
+	fts, base, pk := qi(spec.Name), qi(spec.Table), qi(spec.PKColumn)
+	cols := make([]string, len(spec.Columns))
+	for i, c := range spec.Columns {
+		cols[i] = qi(c)
+	}
+	colList := strings.Join(cols, ", ")
+	newParts := []string{"new." + pk}
+	oldParts := []string{"old." + pk}
+	for _, c := range cols {
+		newParts = append(newParts, "new."+c)
+		oldParts = append(oldParts, "old."+c)
+	}
+	newVals := strings.Join(newParts, ", ")
+	oldVals := strings.Join(oldParts, ", ")
+	ins := func(prefixCol bool, vals string) string {
+		if prefixCol { // FTS5 'delete' command form: INSERT INTO fts(fts, rowid, cols)
+			return "INSERT INTO " + fts + "(" + fts + ", rowid, " + colList + ") VALUES('delete', " + vals + ")"
+		}
+		return "INSERT INTO " + fts + "(rowid, " + colList + ") VALUES (" + vals + ")"
+	}
+	return []string{
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_ai") + " AFTER INSERT ON " + base +
+			" BEGIN " + ins(false, newVals) + "; END",
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_ad") + " AFTER DELETE ON " + base +
+			" BEGIN " + ins(true, oldVals) + "; END",
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_au") + " AFTER UPDATE ON " + base +
+			" BEGIN " + ins(true, oldVals) + "; " + ins(false, newVals) + "; END",
+	}
+}
+
+// vecTriggerSQL builds the vec0 sync triggers for trigger mode (the embedding is
+// a stored base column copied into the sidecar). int64 PKs key the sidecar by
+// rowid; other PKs by an explicit key column.
+func (d sqliteDialect) vecTriggerSQL(spec dialect.SearchSpec) []string {
+	qi := func(s string) string { return string(d.QuoteIdent(nil, s)) }
+	vec, base, pk, emb := qi(spec.Name), qi(spec.Table), qi(spec.PKColumn), qi(spec.Columns[0])
+	keyCol := d.vecKeyToken(spec)
+	return []string{
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_ai") + " AFTER INSERT ON " + base +
+			" WHEN new." + emb + " IS NOT NULL BEGIN " +
+			"INSERT INTO " + vec + "(" + keyCol + ", embedding) VALUES (new." + pk + ", new." + emb + "); END",
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_ad") + " AFTER DELETE ON " + base +
+			" BEGIN DELETE FROM " + vec + " WHERE " + keyCol + " = old." + pk + "; END",
+		"CREATE TRIGGER IF NOT EXISTS " + qi(spec.Name+"_au") + " AFTER UPDATE ON " + base +
+			" BEGIN DELETE FROM " + vec + " WHERE " + keyCol + " = old." + pk + "; " +
+			"INSERT INTO " + vec + "(" + keyCol + ", embedding) SELECT new." + pk + ", new." + emb +
+			" WHERE new." + emb + " IS NOT NULL; END",
+	}
+}
+
+func (d sqliteDialect) vec0CreateSQL(spec dialect.SearchSpec) string {
+	colType := "float"
+	switch spec.Encoding {
+	case "int8":
+		colType = "int8"
+	case "bit":
+		colType = "bit"
+	}
+	embed := "embedding " + colType + "[" + strconv.Itoa(spec.Dim) + "]"
+	if colType != "bit" { // bit[] ranks by Hamming implicitly and rejects a distance= clause
+		metric := spec.Metric
+		if metric == "" {
+			metric = "l2"
+		}
+		embed += " distance=" + metric
+	}
+	var b strings.Builder
+	b.WriteString("CREATE VIRTUAL TABLE IF NOT EXISTS ")
+	b.Write(d.QuoteIdent(nil, spec.Name))
+	b.WriteString(" USING vec0(")
+	if !spec.RowidKeyed() {
+		// A non-integer key (e.g. string PK) needs an explicit primary-key column;
+		// an integer PK maps onto vec0's implicit rowid. vec0's constructor parser
+		// rejects a quoted identifier here, so the key-column name is written raw.
+		b.WriteString(spec.PKColumn + " text primary key, ")
+	}
+	b.WriteString(embed)
+	b.WriteByte(')')
+	return b.String()
+}
+
+func (d sqliteDialect) fts5CreateSQL(spec dialect.SearchSpec) string {
+	var b strings.Builder
+	b.WriteString("CREATE VIRTUAL TABLE IF NOT EXISTS ")
+	b.Write(d.QuoteIdent(nil, spec.Name))
+	b.WriteString(" USING fts5(")
+	for i, c := range spec.Columns {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.Write(d.QuoteIdent(nil, c))
+	}
+	// External content (the only sync-wired mode; ProvisionSearchSQL rejects others):
+	// the index reads the text from the base table by rowid, kept current by triggers.
+	b.WriteString(", content=" + sqlLit(spec.Table))
+	b.WriteString(", content_rowid=" + sqlLit(spec.PKColumn))
+	if spec.Tokenizer != "" {
+		b.WriteString(", tokenize=" + sqlLit(spec.Tokenizer))
+	}
+	if len(spec.Prefix) > 0 {
+		parts := make([]string, len(spec.Prefix))
+		for i, p := range spec.Prefix {
+			parts[i] = strconv.Itoa(p)
+		}
+		b.WriteString(", prefix=" + sqlLit(strings.Join(parts, " ")))
+	}
+	if spec.Detail != "" {
+		b.WriteString(", detail=" + spec.Detail)
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 func sqliteType(goType string) string {

@@ -96,6 +96,10 @@ type Schema struct {
 	PK         *Field   // the single PK when there is exactly one; nil for a composite key
 	SoftDelete *Field
 	Relations  map[string]*Relation
+	// SearchIndexes are the model's full-text / vector sidecars, collected from
+	// `vector`/`fts` struct tags and the optional SearchIndexes method. Empty for
+	// a model with no search indexes.
+	SearchIndexes []SearchIndex
 }
 
 // WriteColumns returns the columns to write: writable, non-auto-increment, and
@@ -175,6 +179,11 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 	if err := walkRelations(t, nil, s); err != nil {
 		return nil, err
 	}
+	ix, err := resolveSearchIndexes(t, s)
+	if err != nil {
+		return nil, err
+	}
+	s.SearchIndexes = ix
 	return s, nil
 }
 

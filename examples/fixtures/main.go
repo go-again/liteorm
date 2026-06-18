@@ -37,10 +37,10 @@ type Member struct {
 func (Member) TableName() string { return "members" }
 
 // BeforeCreate stamps the tenant (org) from context when the caller left it unset.
-func (m *Member) BeforeCreate(ctx context.Context, op *orm.Op[Member]) error {
-	if op.Model.OrgID == 0 {
+func (m *Member) BeforeCreate(ctx context.Context, ev *orm.Event[Member]) error {
+	if ev.Model.OrgID == 0 {
 		if org, ok := orgFrom(ctx); ok {
-			op.Model.OrgID = org
+			ev.Model.OrgID = org
 		}
 	}
 	return nil
@@ -54,10 +54,10 @@ type Project struct {
 
 func (Project) TableName() string { return "projects" }
 
-func (p *Project) BeforeCreate(ctx context.Context, op *orm.Op[Project]) error {
-	if op.Model.OrgID == 0 {
+func (p *Project) BeforeCreate(ctx context.Context, ev *orm.Event[Project]) error {
+	if ev.Model.OrgID == 0 {
 		if org, ok := orgFrom(ctx); ok {
-			op.Model.OrgID = org
+			ev.Model.OrgID = org
 		}
 	}
 	return nil
