@@ -25,19 +25,11 @@ import (
 	"liteorm.org/internal/sqlgen"
 )
 
-type tableNamer interface{ TableName() string }
-
-// tableName derives T's table name: a TableName() method if present, else the
-// snake_case of the type name (no pluralization — explicit over implicit).
+// tableName derives T's table name via the shared resolver: a TableName() method
+// if present, else the snake_case of the type name — pluralized when
+// orm.UsePluralTableNames is enabled, so the query and orm front-ends agree.
 func tableName[T any]() string {
-	var v T
-	if tn, ok := any(v).(tableNamer); ok {
-		return tn.TableName()
-	}
-	if tn, ok := any(&v).(tableNamer); ok {
-		return tn.TableName()
-	}
-	return scan.Snake(reflect.TypeFor[T]().Name())
+	return scan.TableNameOf(reflect.TypeFor[T]())
 }
 
 // colListKey caches a table-qualified column list per (type, table) — table
