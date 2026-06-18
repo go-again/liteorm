@@ -30,7 +30,7 @@ LiteORM's `orm` front-end is deliberately close to gorm in spirit — declarativ
 
 ## What's different (and why)
 
-- **No table-name pluralization.** `User` maps to table `user`, not `users`. Add `func (User) TableName() string { return "users" }` to keep gorm's names. (Your `gorm:"..."` field tags need no change.)
+- **Pluralization is opt-in, not the default.** Out of the box `User` maps to table `user`, not `users`. To keep gorm's plural names everywhere, call `orm.UsePluralTableNames(true)` once at startup (`User` → `users`) and register irregulars with `orm.RegisterPlural("person", "people")`; otherwise pin a single table with `func (User) TableName() string { return "users" }`. (Your `gorm:"..."` field tags need no change either way.)
 - **`gorm:"..."` tags are read as-is.** A ported model behaves identically; you don't have to convert tags to `orm:"..."`. The one type change: a `gorm.DeletedAt` field becomes a `sql.NullTime` tagged `soft_delete` — the porter below does this for you.
 - **Eager loading is explicit and N+1-safe.** There's no lazy loading; you call `orm.Load`/`LoadPath` for exactly the relations you want, and each is one batched query (the test suite asserts the query count). Touching an unloaded relation field gives the zero value, never a hidden query.
 - **Keyed `Update`/`Delete` return `ErrNoRows` on no match.** Updating a missing or out-of-scope (soft-deleted) row is `liteorm.ErrNoRows`, not a silent success — so a no-op is something you can detect. (gorm reports `RowsAffected` instead.) Reach a soft-deleted row on purpose with `IncludeDeleted()`.

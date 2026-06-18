@@ -28,10 +28,15 @@ func GoTypeName(t reflect.Type) string {
 }
 
 // TableNameOf returns t's TableName() method result if it has one (value or
-// pointer receiver), else the snake_case of the type name.
+// pointer receiver), else the snake_case of the type name — pluralized when the
+// plural-table-names convention is enabled (orm.UsePluralTableNames).
 func TableNameOf(t reflect.Type) string {
 	if tn, ok := reflect.New(t).Interface().(interface{ TableName() string }); ok {
 		return tn.TableName()
 	}
-	return Snake(t.Name())
+	name := Snake(t.Name())
+	if pluralTables.Load() {
+		return pluralizeTable(name)
+	}
+	return name
 }

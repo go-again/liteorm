@@ -54,7 +54,7 @@ func emit(pkg string, queries []*plugin.Query) (string, error) {
 	needQuery, needErrors, needTime := false, false, false
 
 	for _, q := range queries {
-		cmd := gen.QueryCmd(normCmd(q.GetCmd()))
+		cmd := gen.QueryCmd(strings.TrimPrefix(q.GetCmd(), ":")) // sqlc cmds are ":one"/":many"/…
 
 		// Result type: a generated row struct for multi-column reads, a scalar
 		// for one. A zero-column :one/:many is degenerate — treat it as :exec.
@@ -124,8 +124,6 @@ func emitRowStruct(b *strings.Builder, name string, cols []*plugin.Column, needT
 	}
 	b.WriteString("}\n\n")
 }
-
-func normCmd(cmd string) string { return strings.TrimPrefix(cmd, ":") }
 
 func argName(p *plugin.Parameter, i int) string {
 	if c := p.GetColumn(); c != nil && c.GetName() != "" {

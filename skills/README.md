@@ -15,7 +15,8 @@ Each `SKILL.md` begins with YAML frontmatter (`name` + a one-sentence `descripti
 | [orm-models](orm-models/SKILL.md) | Declarative models: structs + tags, AutoMigrate, the `orm.Repo`, associations (Load/Attach), hooks, soft delete. |
 | [migrations](migrations/SKILL.md) | Evolving a schema: AutoMigrate (additive), GenerateMigration (reviewable), the migrate runner, WritePair. |
 | [codegen](codegen/SKILL.md) | Generating typed columns/models/queries: `liteorm gen`, the sqlc plugin, the gorm porter. |
-| [sqlite-search](sqlite-search/SKILL.md) | SQLite vector (sqlite-vec), full-text (FTS5), hybrid RRF search, and encryption at rest. |
+| [sqlite-search](sqlite-search/SKILL.md) | SQLite vector (sqlite-vec), full-text (FTS5), and hybrid RRF search. |
+| [encryption](encryption/SKILL.md) | Opening a SQLite database with at-rest (transparent page-level) encryption: keys, reopening, constraints. |
 | [postgres-advanced](postgres-advanced/SKILL.md) | Postgres LISTEN/NOTIFY, and JSONB / array typed operators. |
 | [porting-from-gorm](porting-from-gorm/SKILL.md) | Migrating a gorm codebase: native gorm-tag reading and rewriting to native `orm` tags; what differs. |
 | [logging](logging/SKILL.md) | Seeing/tracing executed SQL while developing: debug logging via slog or the colored handler, traced to your code. |

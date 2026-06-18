@@ -1,6 +1,7 @@
 package query
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,13 +20,13 @@ func Over() Window { return Window{} }
 
 // PartitionBy adds PARTITION BY columns to the window.
 func (w Window) PartitionBy(cols ...Field) Window {
-	w.partition = append(append([]Field{}, w.partition...), cols...)
+	w.partition = slices.Concat(w.partition, cols)
 	return w
 }
 
 // OrderBy adds ORDER BY terms to the window (use Asc/Desc).
 func (w Window) OrderBy(terms ...OrderTerm) Window {
-	w.order = append(append([]OrderTerm{}, w.order...), terms...)
+	w.order = slices.Concat(w.order, terms)
 	return w
 }
 
@@ -72,7 +73,7 @@ type WindowFunc struct {
 // Over attaches the OVER clause and the result alias, yielding a projection field:
 // <func> OVER (<window>) AS <alias>.
 func (wf WindowFunc) Over(w Window, alias string) Field {
-	cols := append(append([]string{}, wf.cols...), w.cols()...)
+	cols := slices.Concat(wf.cols, w.cols())
 	f := plainField(cols, func(d dialect.Dialect) string {
 		return wf.call(d) + " OVER (" + w.render(d) + ") AS " + quoteCol(d, alias)
 	})

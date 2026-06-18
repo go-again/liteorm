@@ -46,7 +46,7 @@ The gotchas that trip people up, with the fix.
 
 ## Hooks
 
-- **A mis-signed hook is a compile error, not a silent no-op** — hooks are typed on T. The signature is `func (t *T) BeforeCreate(ctx context.Context, op *orm.Op[T]) error`. Returning an error aborts the operation.
+- **A mis-signed hook is a compile error, not a silent no-ev** — hooks are typed on T. The signature is `func (t *T) BeforeCreate(ctx context.Context, ev *orm.Event[T]) error`. Returning an error aborts the operation.
 
 ## Deeper
 

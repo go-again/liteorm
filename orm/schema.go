@@ -11,6 +11,7 @@ package orm
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,6 +97,10 @@ type Schema struct {
 	PK         *Field   // the single PK when there is exactly one; nil for a composite key
 	SoftDelete *Field
 	Relations  map[string]*Relation
+	// SearchIndexes are the model's full-text / vector sidecars, collected from
+	// `vector`/`fts` struct tags and the optional SearchIndexes method. Empty for
+	// a model with no search indexes.
+	SearchIndexes []SearchIndex
 }
 
 // WriteColumns returns the columns to write: writable, non-auto-increment, and
@@ -175,17 +180,22 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 	if err := walkRelations(t, nil, s); err != nil {
 		return nil, err
 	}
+	ix, err := resolveSearchIndexes(t, s)
+	if err != nil {
+		return nil, err
+	}
+	s.SearchIndexes = ix
 	return s, nil
 }
 
 func walkColumns(t reflect.Type, prefix []int, colPrefix string, s *Schema) {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
 		}
 		ft := sf.Type
-		idx := append(append([]int{}, prefix...), i)
+		idx := append(slices.Clone(prefix), i)
 		if ep, emb := scan.EmbeddedInfo(sf); emb {
 			et := ft
 			for et.Kind() == reflect.Pointer {
@@ -232,13 +242,13 @@ func addColumn(sf reflect.StructField, idx []int, colPrefix string, ci scan.Colu
 }
 
 func walkRelations(t reflect.Type, prefix []int, s *Schema) error {
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		sf := t.Field(i)
 		if !sf.IsExported() {
 			continue
 		}
 		ft := sf.Type
-		idx := append(append([]int{}, prefix...), i)
+		idx := append(slices.Clone(prefix), i)
 		if _, emb := scan.EmbeddedInfo(sf); emb {
 			et := ft
 			for et.Kind() == reflect.Pointer {

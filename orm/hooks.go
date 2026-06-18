@@ -8,37 +8,37 @@ import (
 	liteorm "liteorm.org"
 )
 
-// Op is the narrow, explicit handle passed to a hook — the executing session and
+// Event is the narrow, explicit handle passed to a hook — the executing session and
 // the typed model. It is not a mutable shared *DB: control flow and capabilities
 // are visible at the signature, and hook errors propagate and abort (they are
 // never swallowed). Wrong hook signatures are a compile error, not a
 // silently-dead hook, because the interfaces are typed on T.
-type Op[T any] struct {
+type Event[T any] struct {
 	Sess  liteorm.Session
 	Model *T
 }
 
 // Hook interfaces. A model opts in by implementing the ones it needs on *T:
 //
-//	func (u *User) BeforeCreate(ctx context.Context, op *orm.Op[User]) error { ... }
+//	func (u *User) BeforeCreate(ctx context.Context, ev *orm.Event[User]) error { ... }
 type (
 	BeforeCreateHook[T any] interface {
-		BeforeCreate(ctx context.Context, op *Op[T]) error
+		BeforeCreate(ctx context.Context, ev *Event[T]) error
 	}
 	AfterCreateHook[T any] interface {
-		AfterCreate(ctx context.Context, op *Op[T]) error
+		AfterCreate(ctx context.Context, ev *Event[T]) error
 	}
 	BeforeUpdateHook[T any] interface {
-		BeforeUpdate(ctx context.Context, op *Op[T]) error
+		BeforeUpdate(ctx context.Context, ev *Event[T]) error
 	}
 	AfterUpdateHook[T any] interface {
-		AfterUpdate(ctx context.Context, op *Op[T]) error
+		AfterUpdate(ctx context.Context, ev *Event[T]) error
 	}
 	BeforeDeleteHook[T any] interface {
-		BeforeDelete(ctx context.Context, op *Op[T]) error
+		BeforeDelete(ctx context.Context, ev *Event[T]) error
 	}
 	AfterDeleteHook[T any] interface {
-		AfterDelete(ctx context.Context, op *Op[T]) error
+		AfterDelete(ctx context.Context, ev *Event[T]) error
 	}
 )
 
@@ -71,39 +71,43 @@ func hooksFor[T any]() hookFlags {
 
 func impl[I any](z any) bool { _, ok := z.(I); return ok }
 
-func fireBeforeCreate[T any](ctx context.Context, op *Op[T]) error {
+func fireBeforeCreate[T any](ctx context.Context, ev *Event[T]) error {
 	if !hooksFor[T]().beforeCreate {
 		return nil
 	}
-	return any(op.Model).(BeforeCreateHook[T]).BeforeCreate(ctx, op)
+	return any(ev.Model).(BeforeCreateHook[T]).BeforeCreate(ctx, ev)
 }
-func fireAfterCreate[T any](ctx context.Context, op *Op[T]) error {
-	if !hooksFor[T]().afterCreate {
-		return nil
+func fireAfterCreate[T any](ctx context.Context, ev *Event[T]) error {
+	if hooksFor[T]().afterCreate {
+		if err := any(ev.Model).(AfterCreateHook[T]).AfterCreate(ctx, ev); err != nil {
+			return err
+		}
 	}
-	return any(op.Model).(AfterCreateHook[T]).AfterCreate(ctx, op)
+	return syncSearchUpsert(ctx, ev)
 }
-func fireBeforeUpdate[T any](ctx context.Context, op *Op[T]) error {
+func fireBeforeUpdate[T any](ctx context.Context, ev *Event[T]) error {
 	if !hooksFor[T]().beforeUpdate {
 		return nil
 	}
-	return any(op.Model).(BeforeUpdateHook[T]).BeforeUpdate(ctx, op)
+	return any(ev.Model).(BeforeUpdateHook[T]).BeforeUpdate(ctx, ev)
 }
-func fireAfterUpdate[T any](ctx context.Context, op *Op[T]) error {
-	if !hooksFor[T]().afterUpdate {
-		return nil
+func fireAfterUpdate[T any](ctx context.Context, ev *Event[T]) error {
+	if hooksFor[T]().afterUpdate {
+		if err := any(ev.Model).(AfterUpdateHook[T]).AfterUpdate(ctx, ev); err != nil {
+			return err
+		}
 	}
-	return any(op.Model).(AfterUpdateHook[T]).AfterUpdate(ctx, op)
+	return syncSearchUpsert(ctx, ev)
 }
-func fireBeforeDelete[T any](ctx context.Context, op *Op[T]) error {
+func fireBeforeDelete[T any](ctx context.Context, ev *Event[T]) error {
 	if !hooksFor[T]().beforeDelete {
 		return nil
 	}
-	return any(op.Model).(BeforeDeleteHook[T]).BeforeDelete(ctx, op)
+	return any(ev.Model).(BeforeDeleteHook[T]).BeforeDelete(ctx, ev)
 }
-func fireAfterDelete[T any](ctx context.Context, op *Op[T]) error {
+func fireAfterDelete[T any](ctx context.Context, ev *Event[T]) error {
 	if !hooksFor[T]().afterDelete {
 		return nil
 	}
-	return any(op.Model).(AfterDeleteHook[T]).AfterDelete(ctx, op)
+	return any(ev.Model).(AfterDeleteHook[T]).AfterDelete(ctx, ev)
 }

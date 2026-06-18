@@ -8,7 +8,7 @@
 // Indexes are keyed by your model's int64 primary key — the canonical recipe is
 // "your table owns the rows, the sidecar index owns the embeddings/terms, the
 // primary key ties them together." A search returns ranked keys (or scored
-// keys); Load fetches the model rows by key, preserving rank order. Hybrid runs
+// keys); Fetch fetches the model rows by key, preserving rank order. Hybrid runs
 // a vector KNN and a full-text query and fuses the two rankings with
 // reciprocal-rank-fusion.
 package search
@@ -172,12 +172,12 @@ func WithK(k float64) Option { return fusion.WithK(k) }
 // WithWeights weights the vector and full-text rankings, in that order.
 func WithWeights(weights ...float64) Option { return fusion.WithWeights(weights...) }
 
-// Load fetches model rows of type T by primary key, preserving the ranked order
+// Fetch fetches model rows of type T by primary key, preserving the ranked order
 // of the supplied keys. Missing keys are skipped. T must be a model the query
 // front-end can address (a TableName and an int64 primary key). It issues one
 // Get per key, which is the right shape for the small top-k slices search
 // returns.
-func Load[T any](ctx context.Context, sess liteorm.Session, keys []int64) ([]T, error) {
+func Fetch[T any](ctx context.Context, sess liteorm.Session, keys []int64) ([]T, error) {
 	repo := query.NewRepo[T](sess)
 	out := make([]T, 0, len(keys))
 	for _, key := range keys {
@@ -193,10 +193,10 @@ func Load[T any](ctx context.Context, sess liteorm.Session, keys []int64) ([]T, 
 	return out, nil
 }
 
-// LoadScored is Load over the keys of a scored result set (Vector.SearchScored
+// FetchScored is Fetch over the keys of a scored result set (Vector.SearchScored
 // or Hybrid), preserving order.
-func LoadScored[T any](ctx context.Context, sess liteorm.Session, scored []Scored) ([]T, error) {
-	return Load[T](ctx, sess, keys(scored))
+func FetchScored[T any](ctx context.Context, sess liteorm.Session, scored []Scored) ([]T, error) {
+	return Fetch[T](ctx, sess, keys(scored))
 }
 
 func keys(s []Scored) []int64 {

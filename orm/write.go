@@ -97,15 +97,15 @@ func (r *Repo[T]) Upsert(ctx context.Context, v *T, oc query.OnConflictSpec) err
 	if err != nil {
 		return err
 	}
-	op := &Op[T]{Sess: r.sess, Model: v}
-	if err := fireBeforeCreate(ctx, op); err != nil {
+	ev := &Event[T]{Sess: r.sess, Model: v}
+	if err := fireBeforeCreate(ctx, ev); err != nil {
 		return err
 	}
 	setAutoTimes(s, v, true)
 	if err := query.NewRepo[T](r.sess).Upsert(ctx, v, oc); err != nil {
 		return err
 	}
-	return fireAfterCreate(ctx, op)
+	return fireAfterCreate(ctx, ev)
 }
 
 // Restore clears the soft-delete timestamp of v's row, bringing a soft-deleted row
@@ -124,8 +124,8 @@ func (r *Repo[T]) Restore(ctx context.Context, v *T) error {
 	if len(s.PKs) == 0 {
 		return fmt.Errorf("orm: type %T has no primary key", *v)
 	}
-	op := &Op[T]{Sess: r.sess, Model: v}
-	if err := fireBeforeUpdate(ctx, op); err != nil {
+	ev := &Event[T]{Sess: r.sess, Model: v}
+	if err := fireBeforeUpdate(ctx, ev); err != nil {
 		return err
 	}
 	up := sqlgen.Update{
@@ -145,7 +145,7 @@ func (r *Repo[T]) Restore(ctx context.Context, v *T) error {
 		return liteorm.ErrNoRows
 	}
 	reflect.ValueOf(v).Elem().FieldByIndex(s.SoftDelete.Index).SetZero() // clear in memory too
-	return fireAfterUpdate(ctx, op)
+	return fireAfterUpdate(ctx, ev)
 }
 
 // Updates writes only the named columns (matched by column or Go field name) of
@@ -181,14 +181,14 @@ func (r *Repo[T]) CreateInBatches(ctx context.Context, vs []*T, batchSize int) e
 		batch := vs[start:end]
 
 		rows := make([][]any, len(batch))
-		ops := make([]*Op[T], len(batch))
+		ops := make([]*Event[T], len(batch))
 		for i, v := range batch {
-			op := &Op[T]{Sess: r.sess, Model: v}
-			if err := fireBeforeCreate(ctx, op); err != nil {
+			ev := &Event[T]{Sess: r.sess, Model: v}
+			if err := fireBeforeCreate(ctx, ev); err != nil {
 				return err
 			}
 			setAutoTimes(s, v, true)
-			ops[i] = op
+			ops[i] = ev
 			rows[i] = scan.Values(v, cols)
 		}
 

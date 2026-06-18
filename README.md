@@ -43,7 +43,7 @@ Most libraries that call themselves *lite* got there by leaving features out. Li
 
 - **🧩 Two paradigms, one core — no library lock-in.** The `query` builder (typed, low-magic) and the `orm` (declarative, tag-driven) share one `Session`, one dialect, one scanner, and one set of normalized errors. A row fetched via `orm` feeds `query` on the *same* transaction. Most stacks make you pick a camp; LiteORM lets each part of your app pick the right tool.
 
-- **⚡ Modern baseline, lean core.** Generics-first: typed result rows and typed `Col[V]` predicates, with no reflection on the hot path. The core module pulls in **no** database drivers — each backend (`dialect/sqlite`, `dialect/postgres`, `dialect/mysql`, `dialect/mssql`) is its own module, so your build only carries the driver you use. SQLite is pure Go: cross-compile with plain `go build`, ship static distroless/alpine binaries, no C toolchain. `iter.Seq2` streaming, `log/slog` logging, and `gopls modernize` enforced in CI keep it from drifting backward.
+- **⚡ Modern baseline, lean core.** Generics-first: typed result rows and typed `Col[V]` predicates, with no reflection on the hot path. The core module pulls in **no** database drivers — each backend (`dialect/sqlite`, `dialect/postgres`, `dialect/mysql`, `dialect/mssql`) is its own module, so your build only carries the driver you use. SQLite is pure Go: cross-compile with plain `go build`, ship static distroless/alpine binaries, no C toolchain — and open it **[encrypted at rest](docs/guides/encryption.md)** with a key, transparent page-level encryption (Adiantum) without a CGo sqlcipher build. `iter.Seq2` streaming, `log/slog` logging, and `gopls modernize` enforced in CI keep it from drifting backward.
 
 - **🤖 Built for agents — AI-native two ways.** The embedded [**studio**](docs/guides/studio.md) turns plain English into SQL through one server-side `WithAI` hook to any model, so your API key never reaches the browser — no other Go ORM ships this. *Separately*, the repo ships [**Agent Skills**](skills/) and an [`AGENTS.md`](AGENTS.md) so an AI coding assistant writes correct LiteORM without guessing. AI for the people *using* your database and the people *building* against it.
 
@@ -65,7 +65,8 @@ Most libraries that call themselves *lite* got there by leaving features out. Li
 - **[Migrations](docs/guides/migrations.md)** — additive `AutoMigrate` plus a two-track model: destructive changes become a *reviewable* migration you apply through a thin runner that reads golang-migrate / goose / plain SQL files.
 - **[Normalized errors](docs/guides/errors.md)** — `ErrUniqueViolation`, `ErrForeignKey`, `ErrNotNull`, `ErrCheck`, `ErrNoRows`, `ErrDeadlock`, `ErrSerialization` — the same on SQLite, Postgres, MySQL, and SQL Server.
 - **[Code generation](docs/guides/codegen.md)** — typed `Column[V]` constants for compile-time column safety, models from a live DB, SQL→typed-Go from annotated queries, a sqlc process plugin, and a gorm→LiteORM tag porter.
-- **[SQLite vector / full-text / hybrid search](docs/guides/sqlite-search.md)** — typed vector (sqlite-vec) and FTS5 search, plus reciprocal-rank-fusion **hybrid** search, keyed by your model's primary key; encryption at rest.
+- **[SQLite vector / full-text / hybrid search](docs/guides/sqlite-search.md)** — typed vector (sqlite-vec) and FTS5 search, plus reciprocal-rank-fusion **hybrid** search, keyed by your model's primary key.
+- **[At-rest encryption](docs/guides/encryption.md)** — open an encrypted SQLite database with a 32-byte key: transparent, page-level encryption (Adiantum), **pure Go — no CGo sqlcipher**. The on-disk file is ciphertext; the `query` builder, `orm`, and migrations all work unchanged above it.
 - **[SQLite changesets](docs/guides/sqlite-changeset.md)** — capture, apply, invert, and concat changesets for audit logs, one-way replication, and undo.
 - **[Postgres extras](docs/guides/postgres.md)** — LISTEN/NOTIFY and typed JSONB (`->`, `->>`, `@>`) and array (`@>`, `&&`, `= ANY`) operators.
 
@@ -78,6 +79,7 @@ Read top-down: who LiteORM is, what it's built for, then the capability depth be
 | Core runtime model | generics, no reflection | reflection | reflection | generated code | generated code |
 | Explicit query builder **and** declarative ORM in one lib | ✓ | ✗ (ORM) | ✓ builder (light ORM) | ✗ (SQL→Go) | ✗ (generated ORM) |
 | CGo-free SQLite (pure Go, no C toolchain) | ✓ | driver of choice | driver of choice | driver of choice | driver of choice |
+| At-rest encrypted SQLite, **pure Go** (no CGo sqlcipher) | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Ships an **embedded database studio** (admin GUI) | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Studio with **built-in AI** (NL→SQL, English filters, result charts) | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Ships AI Agent Skills + task-oriented docs | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -149,7 +151,7 @@ Full walkthrough in **[Getting started](docs/getting-started.md)**.
 
 ## Examples
 
-Runnable, smoke-tested programs under [`examples/`](examples/): `blog` (a small end-to-end blog engine — models, associations, nested eager loading, an aggregate query, and a transaction), `query` and `orm` feature showcases, `logging` (statement tracing), `search` (vector + full-text + hybrid), `queries` (SQL→Go codegen), `gormport` (the gorm porter), and `codegen`. `just example <name>` runs one; `just examples` runs them all.
+Runnable, smoke-tested programs under [`examples/`](examples/): `blog` (a small end-to-end blog engine — models, associations, nested eager loading, an aggregate query, and a transaction), `query` and `orm` feature showcases, `logging` (statement tracing), `search` (vector + full-text + hybrid), `encryption` (at-rest encrypted SQLite), `queries` (SQL→Go codegen), `gormport` (the gorm porter), and `codegen`. `just example <name>` runs one; `just examples` runs them all.
 
 ## Development & contributing
 

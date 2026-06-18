@@ -2,6 +2,7 @@ package orm
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -114,6 +115,154 @@ func migrateSchema(ctx context.Context, sess liteorm.Session, s *Schema, cfg mig
 		}
 		if jcols, _ := tryIntrospect(ctx, sess, rel.JoinTable); len(jcols) == 0 {
 			if _, err := sess.ExecContext(ctx, createJoinTableSQL(rel, s.PK, d)); err != nil {
+				return err
+			}
+		}
+	}
+	// Provision any declared search sidecars (full-text / vector). No-op on a
+	// backend without dialect.SearchProvisioner — the capability is optional, like
+	// the index introspection above.
+	if err := provisionSearch(ctx, sess, s, d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// provisionSearch creates the model's declared search sidecars, idempotently, on
+// a backend that implements dialect.SearchProvisioner; otherwise it is a no-op.
+func provisionSearch(ctx context.Context, sess liteorm.Session, s *Schema, d dialect.Dialect) error {
+	if len(s.SearchIndexes) == 0 {
+		return nil
+	}
+	sp, ok := d.(dialect.SearchProvisioner)
+	if !ok {
+		return nil
+	}
+	for _, ix := range s.SearchIndexes {
+		spec, err := searchSpecOf(s, ix)
+		if err != nil {
+			return err
+		}
+		stmts, err := sp.ProvisionSearchSQL(spec)
+		if err != nil {
+			return err
+		}
+		for _, stmt := range stmts {
+			if _, err := sess.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// searchSpecOf lowers a SearchIndex into the dialect-neutral dialect.SearchSpec,
+// resolving Go field names to columns and supplying the base table's primary key
+// (which keys the sidecar).
+func searchSpecOf(s *Schema, ix SearchIndex) (dialect.SearchSpec, error) {
+	if s.PK == nil {
+		return dialect.SearchSpec{}, fmt.Errorf("orm: search index %q on %q needs a single-column primary key", ix.Name, s.Table)
+	}
+	colOf := make(map[string]string, len(s.Fields))
+	for _, f := range s.Fields {
+		colOf[f.GoName] = f.Column
+	}
+	spec := dialect.SearchSpec{
+		Name:     ix.Name,
+		Table:    s.Table,
+		PKColumn: s.PK.Column,
+		PKType:   s.PK.dialField.GoType,
+	}
+	switch ix.Kind {
+	case dialect.SearchVector:
+		spec.Kind = dialect.SearchVector
+		spec.Dim, spec.Metric, spec.Encoding = ix.Dim, ix.Metric.String(), ix.Encoding
+		col, stored := colOf[ix.Fields[0]] // stored == the embedding is a real base column
+		if !stored {
+			col = ix.Fields[0]
+		}
+		spec.Columns = []string{col}
+		// Trigger mode copies a stored base column into the sidecar; hook mode keeps
+		// the embedding sidecar-only. Auto picks triggers when it can (the embedding
+		// is stored), else hooks.
+		switch ix.Sync {
+		case SyncTriggers:
+			if !stored {
+				return dialect.SearchSpec{}, fmt.Errorf("orm: vector index %q is trigger-synced but field %q is not a stored column (remove orm:%q to store it, or use hook sync)", ix.Name, ix.Fields[0], "-")
+			}
+			spec.Sync = "triggers"
+		case SyncHooks:
+			spec.Sync = "hooks"
+		default:
+			if stored {
+				spec.Sync = "triggers"
+			} else {
+				spec.Sync = "hooks"
+			}
+		}
+	case dialect.SearchFullText:
+		// FTS5 external content is keyed by the integer rowid, so a non-integer PK
+		// can't drive it (the trigger would assign a TEXT key to rowid and fail at
+		// the first write). Reject it at migrate time, not as a datatype mismatch later.
+		if !spec.RowidKeyed() {
+			return dialect.SearchSpec{}, fmt.Errorf("orm: full-text index %q requires an integer primary key — FTS5 is keyed by integer rowid, but %q has a %q key", ix.Name, s.Table, spec.PKType)
+		}
+		spec.Kind = dialect.SearchFullText
+		spec.Tokenizer, spec.Prefix, spec.Detail, spec.Content = ix.Tokenizer, ix.Prefix, ix.Detail, ix.Content
+		spec.Sync = "triggers" // FTS external-content is kept in sync by triggers
+		for _, fn := range ix.Fields {
+			c, ok := colOf[fn]
+			if !ok {
+				return dialect.SearchSpec{}, fmt.Errorf("orm: full-text index %q field %q is not a column", ix.Name, fn)
+			}
+			spec.Columns = append(spec.Columns, c)
+		}
+	}
+	return spec, nil
+}
+
+// SearchSpecs returns the resolved, dialect-neutral search specifications for T —
+// sidecar names defaulted, field names resolved to columns, sync mode resolved.
+// The typed search helpers use it to locate a model's sidecars without
+// re-deriving them. The result is in the same order as Schema.SearchIndexes.
+func SearchSpecs[T any]() ([]dialect.SearchSpec, error) {
+	s, err := SchemaOf[T]()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dialect.SearchSpec, 0, len(s.SearchIndexes))
+	for _, ix := range s.SearchIndexes {
+		spec, err := searchSpecOf(s, ix)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, spec)
+	}
+	return out, nil
+}
+
+// DropSearchIndexes drops the search sidecars declared by T (idempotent). It is a
+// no-op on a backend without dialect.SearchProvisioner.
+func DropSearchIndexes[T any](ctx context.Context, sess liteorm.Session) error {
+	s, err := SchemaOf[T]()
+	if err != nil {
+		return err
+	}
+	sp, ok := sess.Dialect().(dialect.SearchProvisioner)
+	if !ok {
+		return nil
+	}
+	for _, ix := range s.SearchIndexes {
+		spec, err := searchSpecOf(s, ix)
+		if err != nil {
+			return err
+		}
+		stmts, err := sp.DropSearchSQL(spec)
+		if err != nil {
+			return err
+		}
+		for _, stmt := range stmts {
+			if _, err := sess.ExecContext(ctx, stmt); err != nil {
 				return err
 			}
 		}

@@ -139,7 +139,7 @@ func loadRelation(ctx context.Context, sess liteorm.Session, parents []reflect.V
 	}
 
 	perParent := make([][]reflect.Value, len(parents))
-	for ci := 0; ci < children.Len(); ci++ {
+	for ci := range children.Len() {
 		cv := children.Index(ci)
 		key := normalizeKey(cv.FieldByIndex(targetField.Index).Interface())
 		for _, oi := range byKey[key] {
@@ -191,7 +191,7 @@ func loadRelationM2M(ctx context.Context, sess liteorm.Session, parents []reflec
 		return nil, err
 	}
 	perParent := make([][]reflect.Value, len(parents))
-	for i := 0; i < items.Len(); i++ {
+	for i := range items.Len() {
 		cv := items.Index(i)
 		for _, oi := range byKey[keys[i]] {
 			perParent[oi] = append(perParent[oi], cv)
@@ -239,7 +239,7 @@ func scatter(parents []reflect.Value, rel *Relation, perParent [][]reflect.Value
 				sl = reflect.Append(sl, k)
 			}
 			fv.Set(sl)
-			for j := 0; j < fv.Len(); j++ {
+			for j := range fv.Len() {
 				handles = append(handles, fv.Index(j))
 			}
 		} else if fv.Kind() == reflect.Pointer {

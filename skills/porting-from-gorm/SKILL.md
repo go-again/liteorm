@@ -58,7 +58,7 @@ Tag translation (a sample):
 | `Preload("A").Preload("B")` | Separate `orm.Load` calls; nested = chain one level at a time. |
 | Soft delete hidden automatically + `Unscoped()` | Default reads also hide deleted rows, but the opt-outs are explicit: `IncludeDeleted()` / `OnlyDeleted()` / `ForceDelete`. |
 | `gorm.DeletedAt` field type | `sql.NullTime` with the `soft_delete` tag. |
-| Pluralized table names by default | None — `TableName()` or `snake_case(TypeName)` with no pluralization. Keep your `TableName()`. |
+| Pluralized table names by default | Opt-in: `orm.UsePluralTableNames(true)` restores gorm-style plurals globally (`orm.RegisterPlural` for irregulars). Otherwise `snake_case(TypeName)` singular, or pin with `TableName()`. |
 | Hooks as methods (silent if mis-signed) | Hooks are typed on T — a wrong signature is a compile error (see orm-models skill). |
 
 ## Pitfalls
