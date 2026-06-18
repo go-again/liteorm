@@ -45,7 +45,7 @@ gen/              codegen: typed columns, models, SQL→Go, the gorm porter
 - `dialect/mysql`, `dialect/mssql` — over `internal/sqladapter`.
 - `conformance/` — the cross-dialect test suite (one scenario set, run against every backend; live DBs gated behind `LITEORM_*_DSN`).
 - `cmd/sqlc-gen-liteorm/` — a sqlc process plugin; `plugin/codegen.pb.go` is **vendored generated protobuf** (MIT, from sqlc) — do not hand-edit it.
-- `studio/` — the embedded database studio (admin GUI) as a stdlib `http.Handler`. The library package depends only on the driver-free core (you pass it an opened `*liteorm.DB`); its tests + `cmd/studio-demo` pull in `dialect/sqlite`. The frontend lives in `studio/web/` (a Vite app importing the Prisma Studio UI, driven by a thin adapter in `studio/web/src/adapter.ts`); the **built `studio/web/dist` is a committed, `go:embed`-ed artifact — do not hand-edit it**, run `just studio-ui` to regenerate. The UI-upgrade procedure is `dev/studio-ui-upgrade.md`.
+- The embedded database studio (admin GUI, a stdlib `http.Handler`) is a **separate module and repository**, [`liteorm.org/studio`](https://pkg.go.dev/liteorm.org/studio) — it is not part of this repo. It depends only on the driver-free core (you pass it an opened `*liteorm.DB`).
 - `examples/*` — runnable, smoke-tested programs, each its own module.
 
 Dot-prefixed top-level dirs (`.sqlite/`) are local-only working state, gitignored; nothing in the module references them.

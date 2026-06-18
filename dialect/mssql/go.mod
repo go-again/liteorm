@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/microsoft/go-mssqldb v1.10.0
-	liteorm.org v0.0.0
+	liteorm.org v0.8.0
 )
 
 require (

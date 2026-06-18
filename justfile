@@ -221,42 +221,79 @@ db-down:
     @docker rm -f liteorm-pg liteorm-mysql liteorm-mssql >/dev/null 2>&1 || true
     @echo "db containers removed"
 
-# Rebuild the studio frontend (the Prisma-based UI driven by liteorm's adapter)
-# into studio/web/dist, which is committed and embedded by the Go module. Run
-# this after bumping @prisma/studio-core or editing studio/web/src — then commit
-# the regenerated studio/web/dist. Requires Node + npm (dev-only; not needed to
-# `go get` the studio).
-
-# Rebuild the studio frontend
-studio-ui:
-    cd studio/web && npm install && npm run typecheck && npm run build
-    @echo "studio/web/dist rebuilt — commit it"
-
-studio-demo: studio-ui
-    cd studio/cmd/studio-demo && go run .
-
-# Run the demo locked read-only at compile time (the studio_readonly build tag) —
-# what a public, unbreakable online demo deploys: browse/filter/read-SQL only.
-studio-demo-readonly: studio-ui
-    cd studio/cmd/studio-demo && go run -tags studio_readonly .
-
-# Plug the studio into an EXISTING database with no Go models (catalog-only
-# introspection: tables, columns, types, primary keys, foreign-key navigation).
-# Needs the matching DB running — `just db-up` starts all three; each demo applies
-# its schema.sql once, then serves on its own port (MySQL :8100, Postgres :8101,
-# SQL Server :8102).
-studio-demo-mysql: studio-ui
-    cd studio/cmd/studio-demo-mysql && go run .
-
-studio-demo-postgres: studio-ui
-    cd studio/cmd/studio-demo-postgres && go run .
-
-studio-demo-mssql: studio-ui
-    cd studio/cmd/studio-demo-mssql && go run .
-
 # Full CI parity: everything, in order.
 ci: build test test-race lint examples
 
 # Clean test artifacts.
 clean:
     @find . -name '*.test' -not -path './.*' -delete 2>/dev/null || true
+
+# --- Release ---------------------------------------------------------------
+# Prepare a multi-module release. Bumps every internal cross-module require
+# (liteorm.org*) to VERSION across the publishable modules — and gosqlite.org to
+# GOSQLITE when given — verifies the workspace still builds, then PRINTS the exact
+# ordered tag/push plan. It edits go.mod only: it never commits, tags, or pushes
+# (run the printed git commands yourself). Module set and dependency edges are
+# discovered from go.work + each go.mod, so this adapts as modules come and go.
+#
+# Local `replace` directives are dev-only and ignored by consumers, so they stay.
+#
+#   just release v0.1.0           # bump liteorm.org* requires to v0.1.0
+#   just release v0.1.0 v0.3.0    # also pin gosqlite.org@v0.3.0 (required before
+#                                 # dialect/sqlite can be published functionally)
+release VERSION GOSQLITE="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    v='{{ VERSION }}'; gq='{{ GOSQLITE }}'
+    semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+    [[ "$v"  =~ $semver ]] || { echo "✗ VERSION must look like v1.2.3 or v1.2.3-rc.1 (got '$v')"  >&2; exit 1; }
+    [[ -z "$gq" || "$gq" =~ $semver ]] || { echo "✗ GOSQLITE must look like v1.2.3 (got '$gq')" >&2; exit 1; }
+
+    # Publishable = every workspace module except the examples and the test-only
+    # conformance module (those are never tagged or imported by anyone).
+    publishable() { case "$1" in ./examples/*|./conformance) return 1 ;; *) return 0 ;; esac; }
+
+    echo "→ bumping internal requires to $v${gq:+, gosqlite.org to $gq}"
+    bumped=0
+    for m in {{ mods }}; do
+        publishable "$m" || continue
+        [ -f "$m/go.mod" ] || continue
+        # Each REQUIRED liteorm.org* path in this go.mod. Require lines read
+        # "<path> v<ver>"; replace lines use "=>" and the module line carries no
+        # version, so neither matches. The space before 'v' stops liteorm.org from
+        # also catching liteorm.org/gen.
+        for p in $(grep -oE "liteorm\.org(/[A-Za-z0-9._/-]+)? v[0-9][^[:space:]]*" "$m/go.mod" | sed -E 's/ v.*//' | sort -u); do
+            (cd "$m" && go mod edit -require="$p@$v"); echo "    $m: $p → $v"; bumped=1
+        done
+        if [ -n "$gq" ] && grep -qE "(^|[[:space:]])gosqlite\.org v[0-9]" "$m/go.mod"; then
+            (cd "$m" && go mod edit -require="gosqlite.org@$gq"); echo "    $m: gosqlite.org → $gq"; bumped=1
+        fi
+    done
+    [ "$bumped" -eq 1 ] || echo "    (no internal requires found to bump)"
+
+    echo "→ verifying the workspace still builds (go.work resolves modules locally)"
+    just build
+
+    echo
+    echo "→ go.mod changes:"
+    git diff --stat -- '*go.mod' 2>/dev/null || echo "    (not a git repo — review go.mod diffs by hand)"
+
+    echo
+    echo "════════ RELEASE PLAN — run these yourself; nothing below was executed ════════"
+    echo "  git add -A && git commit -m 'release $v'"
+    echo "  git tag $v                              # root module: liteorm.org"
+    for m in {{ mods }}; do
+        publishable "$m" || continue
+        case "$m" in .|./) continue ;; esac         # root tagged above
+        echo "  git tag ${m#./}/$v"
+    done
+    echo "  git push origin HEAD --tags             # commit + every tag, together"
+    echo
+    echo "  Before consumers can 'go get' these, ensure:"
+    echo "    • the liteorm.org go-import vanity meta is served (module path → GitHub repo)"
+    if [ -n "$gq" ]; then
+        echo "    • gosqlite.org@$gq is already a published tag"
+    else
+        echo "    • dialect/sqlite still requires its current gosqlite.org version — re-run with a"
+        echo "      published gosqlite version as the 2nd arg before publishing dialect/sqlite"
+    fi

@@ -2,9 +2,15 @@
 
 LiteORM is a Go data-access library with **two front-ends over one CGo-free core**: an explicit, generics-first **`query`** builder and a declarative, convention-driven **`orm`**. Both run against the same backends, the same transaction, and the same normalized errors — so you use `orm` for CRUD and drop to `query` for a hot path on the same connection without changing libraries.
 
-New here? Start with **[Getting started](getting-started.md)**, then pick the front-end that fits the task. Coding with an AI assistant? Set it up first with **[AI agents & skills](guides/ai-agents.md)** so it writes correct LiteORM from the start.
+New here? Start with **[Getting started](getting-started.md)**, then pick the front-end that fits the task. Coding with an AI assistant? Set it up first with **[AI agents & skills](guides/ai-agents.md)** so it writes correct LiteORM from the start. Coming from gorm? Map what you know in **[Coming from gorm](guides/from-gorm.md)**.
 
 ## Guides
+
+**Start here**
+
+- [Cheat sheet](reference/cheatsheet.md) — the whole API surface on one screen, each row linking to its guide.
+- [Recipes](guides/recipes.md) — copy-paste solutions for the common tasks (pagination, bulk insert, upsert, streaming, retries…).
+- [Coming from gorm](guides/from-gorm.md) — the verb-for-verb map and what's intentionally different.
 
 **Querying & models**
 
@@ -35,6 +41,7 @@ New here? Start with **[Getting started](getting-started.md)**, then pick the fr
 
 ## Reference
 
+- [Cheat sheet](reference/cheatsheet.md) — every Repo method, query terminal, error sentinel, and migrate verb at a glance.
 - [Backends](reference/backends.md) — opening each backend, DSN shapes, and the per-dialect capability matrix.
 - [Dialects](reference/dialects.md) — placeholder styles, identifier quoting, feature flags, and dialect quirks.
 - [Supported Go](reference/supported-go.md) — the supported-release policy.

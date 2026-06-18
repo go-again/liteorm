@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://github.com/liteorm/.github/raw/main/profile/logo.png" alt="LiteORM" width="128" />
+
 # LiteORM
 
 [**Docs**](docs/index.md) &nbsp;·&nbsp; [**Get started**](docs/getting-started.md) &nbsp;·&nbsp; [**API reference**](https://pkg.go.dev/liteorm.org) &nbsp;·&nbsp; [**Agent skills**](skills/)
@@ -28,6 +30,12 @@ books, _ := query.Select[Product](db).
 	)).
 	OrderBy("price").All(ctx)
 ```
+
+<div align="center">
+
+<a href="docs/guides/studio.md"><img src="https://liteorm.com/liteorm-studio-1-dark.png" alt="LiteORM Studio — the embedded database admin GUI" width="900" /></a>
+
+</div>
 
 ## Why LiteORM
 
@@ -70,7 +78,7 @@ Read top-down: who LiteORM is, what it's built for, then the capability depth be
 | Core runtime model | generics, no reflection | reflection | reflection | generated code | generated code |
 | Explicit query builder **and** declarative ORM in one lib | ✓ | ✗ (ORM) | ✓ builder (light ORM) | ✗ (SQL→Go) | ✗ (generated ORM) |
 | CGo-free SQLite (pure Go, no C toolchain) | ✓ | driver of choice | driver of choice | driver of choice | driver of choice |
-| Ships an **embedded database studio** (admin GUI) in-tree | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Ships an **embedded database studio** (admin GUI) | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Studio with **built-in AI** (NL→SQL, English filters, result charts) | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Ships AI Agent Skills + task-oriented docs | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Typed joins, set ops, subqueries, CTEs, window functions | ✓ | partial | partial | n/a | ✓ |
@@ -80,7 +88,7 @@ Read top-down: who LiteORM is, what it's built for, then the capability depth be
 | Codegen: typed columns / models / SQL→Go + sqlc plugin | ✓ | ✗ | ✗ | ✓ (SQL→Go) | ✓ (schema→code) |
 | SQLite vector + FTS5 + hybrid search, changesets | ✓ | ✗ | ✗ | ✗ | ✗ |
 
-**Where it's strongest:** LiteORM is the only Go library that puts a typed query builder *and* a declarative ORM over one core — so the wins above (normalized errors on every backend, N+1-safe-by-construction loading, CGo-free SQLite with vector/FTS/hybrid search and changesets, an in-tree database studio with built-in AI, shipped Agent Skills) hold across both front-ends, not just one.
+**Where it's strongest:** LiteORM is the only Go library that puts a typed query builder *and* a declarative ORM over one core — so the wins above (normalized errors on every backend, N+1-safe-by-construction loading, CGo-free SQLite with vector/FTS/hybrid search and changesets, an embedded database studio with built-in AI, shipped Agent Skills) hold across both front-ends, not just one.
 
 **By design:** LiteORM is runtime-first — typed predicates and clauses cover the everyday SQL surface, with `Project` / `Raw[T]` as the escape hatch for the genuinely exotic, rather than a fully-generated DSL like ent. Full compile-time *column* safety is therefore opt-in through the [codegen](docs/guides/codegen.md) on-ramp instead of mandatory, and the ecosystem is younger than gorm's or ent's.
 

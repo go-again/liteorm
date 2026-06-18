@@ -131,6 +131,8 @@ See [Errors](guides/errors.md).
 
 ## Where to go next
 
+- [Cheat sheet](reference/cheatsheet.md) — the whole API surface on one screen, and [Recipes](guides/recipes.md) for common tasks.
+- [Coming from gorm](guides/from-gorm.md) — the verb-for-verb map and the intentional differences.
 - The [query](guides/query.md) and [orm](guides/orm.md) guides cover each front-end in depth.
 - [Code generation](guides/codegen.md) adds compile-time column safety and SQL→Go.
 - Backend-specific power: [SQLite search](guides/sqlite-search.md), [SQLite changesets](guides/sqlite-changeset.md), [Postgres LISTEN/NOTIFY + JSONB](guides/postgres.md).

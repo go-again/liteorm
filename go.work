@@ -19,9 +19,4 @@ use (
 	./examples/query
 	./examples/search
 	./gen
-	./studio
-	./studio/cmd/studio-demo
-	./studio/cmd/studio-demo-mysql
-	./studio/cmd/studio-demo-mssql
-	./studio/cmd/studio-demo-postgres
 )
