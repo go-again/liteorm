@@ -117,6 +117,12 @@ tidy:
 work-sync:
     go work sync
 
+# Bump every intra-repo liteorm.org* require to VERSION, then resync (run before
+# tagging a release). e.g. `just pin v0.9.0`. gosqlite.org is pinned separately.
+pin VERSION:
+    python3 dev/pin.py {{ VERSION }}
+    go work sync
+
 # Run one example by name (e.g. `just example blog`).
 example NAME:
     @cd examples/{{ NAME }} && go run .

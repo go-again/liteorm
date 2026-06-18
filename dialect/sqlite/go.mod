@@ -24,8 +24,4 @@ require (
 	modernc.org/sqlite v1.52.0 // indirect
 )
 
-// Local development replaces (pre-publication). gosqlite.org is the sibling
-// driver checkout; liteorm.org is this repo's root module.
-replace gosqlite.org => ../../.gosqlite
-
 replace liteorm.org => ../..
