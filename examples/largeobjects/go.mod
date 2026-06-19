@@ -1,14 +1,15 @@
-module liteorm.org/examples/fixtures
+module liteorm.org/examples/largeobjects
 
 go 1.25.7
 
 require (
-	liteorm.org v0.11.0
-	liteorm.org/dialect/sqlite v0.8.0
+	liteorm.org v0.12.0
+	liteorm.org/dialect/sqlite v0.12.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/go-again/az v0.2.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
@@ -17,6 +18,7 @@ require (
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	gosqlite.org v0.9.0 // indirect
+	gosqlite.org/blobstore v0.9.0 // indirect
 	gosqlite.org/vfs/crypto v0.9.0 // indirect
 	lukechampine.com/adiantum v1.1.1 // indirect
 	modernc.org/libc v1.72.3 // indirect

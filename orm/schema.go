@@ -101,6 +101,9 @@ type Schema struct {
 	// `vector`/`fts` struct tags and the optional SearchIndexes method. Empty for
 	// a model with no search indexes.
 	SearchIndexes []SearchIndex
+	// LOBFields are the model's large-object columns (fields of type orm.LOB),
+	// each backed by an out-of-band content store. Empty for a model with none.
+	LOBFields []LOBField
 }
 
 // WriteColumns returns the columns to write: writable, non-auto-increment, and
@@ -185,6 +188,9 @@ func buildSchema(t reflect.Type) (*Schema, error) {
 		return nil, err
 	}
 	s.SearchIndexes = ix
+	if err := resolveLOBFields(t, s); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 

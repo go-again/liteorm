@@ -71,6 +71,15 @@ docs, _ := search.Fetch[Doc](ctx, db, keys)                 // or FetchScored fr
 
 Query builders (re-exported, no gosqlite import): `Term`, `Phrase`, `Prefix`, `And`, `Or`, `Not`, `Near`, `Column`, `Raw`. Metrics: `orm.L2` (default), `orm.Cosine`, `orm.L1`, `orm.Hamming`. RRF tuning: `search.WithK(60)`, `search.WithWeights(wVec, wText)`.
 
+### Custom projection: `*SQL` + `query.Raw[T]`
+
+When your row shape diverges from the model — extra computed columns, a JOIN, a non-ranking filter, a `Score`/`Distance` projection — drop below `search.For[T]` and compose the SQL through gosqlite's typed `fts.SearchSQL` / `vec.KNNSQL` (with their `WithSelect` / `WithJoin` / `WithFilter` options), then execute it with `query.Raw[T](ctx, sess, sql, args...)`. That is the **canonical, intended executor for `*SQL`-returning APIs — the typed pipeline's final step, not a raw-SQL escape hatch.** Reach for `search.For[T]` when you want model-shaped ranked results; drop one level down when the shape diverges.
+
+```go
+sql, args, _ := vecTbl.KNNSQL(queryEmb, 10, vec.WithSelect("rowid, distance"), vec.WithFilter("source = ?", src))
+hits, _ := query.Raw[searchHit](ctx, db, sql, args...)
+```
+
 ## MATCH in a composed query
 
 `query.Match("col", q)` is the SQLite `MATCH` operator as a composable predicate — for filtering an FTS5 / spellfix1 / sqlite-vec virtual table inside an ordinary `query.Select` or `orm.Repo` chain, alongside `OrderBy`/`Limit`/other `Filter` predicates. It is feature-gated (rejected at build time off SQLite). Narrower than `search.For[T]` (which returns *ranked* models): use `Match` when you want the operator inside your own query, `search.For[T]` when you want ranking.

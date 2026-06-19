@@ -19,17 +19,22 @@ db, err := sqlite.OpenEncrypted(path, key) // key is 32 bytes; default Adiantum 
 - `key` is a 32-byte secret — source it from a KMS/secret store, never a literal. Losing it loses the data (no recovery).
 - The on-disk file is ciphertext. Reopen with the SAME key to read; a wrong key fails (open or first query), it does not return garbage.
 
-## Full control (cipher / pragmas / pool) via OpenConfig
+## Full control (cipher / pragmas / pool) via OpenEncryptedConfig
 
 ```go
-import gosqlite "gosqlite.org"
+import (
+    gosqlite "gosqlite.org"
+    "gosqlite.org/vfs/crypto"
+)
 
-db, err := sqlite.OpenConfig(gosqlite.Config{
-    Path:       path,
-    Pragmas:    gosqlite.RecommendedPragmas(),
-    Encryption: &gosqlite.Encryption{Key: key, Cipher: gosqlite.Adiantum},
-})
+db, err := sqlite.OpenEncryptedConfig(
+    gosqlite.Config{Path: path, Pragmas: gosqlite.RecommendedPragmas()},
+    crypto.Options{Key: key, Cipher: crypto.Adiantum},
+)
 ```
+
+- `crypto.AESXTS` (a 64-byte key) selects AES-XTS-256 for compliance regimes that mandate AES; the default `crypto.Adiantum` (32-byte key) is otherwise the better choice.
+- `crypto.DeriveKey(passphrase, salt, cipher)` turns a passphrase + per-database salt into a correctly-sized key (Argon2id). The salt must be at least 16 bytes and unique per database; persist it alongside the database.
 
 ## Constraints
 
@@ -41,4 +46,4 @@ db, err := sqlite.OpenConfig(gosqlite.Config{
 ## Deeper
 
 - Example: `examples/encryption` (write encrypted, verify ciphertext on disk, reopen, reject the wrong key).
-- API: https://pkg.go.dev/liteorm.org/dialect/sqlite (`OpenEncrypted`, `OpenConfig`).
+- API: https://pkg.go.dev/liteorm.org/dialect/sqlite (`OpenEncrypted`, `OpenEncryptedConfig`, `OpenConfig`).

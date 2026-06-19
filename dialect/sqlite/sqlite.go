@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	gosqlite "gosqlite.org"
+	"gosqlite.org/vfs/crypto"
 	liteorm "liteorm.org"
 	"liteorm.org/internal/sqladapter"
 	"liteorm.org/internal/sqlgen"
@@ -27,10 +28,10 @@ func Open(path string, opts ...liteorm.Option) (*liteorm.DB, error) {
 	}, opts...)
 }
 
-// OpenConfig opens SQLite from a full gosqlite.Config, for callers that need
-// encryption, a custom VFS, or non-default pragmas/pool sizing. The returned
-// liteorm.DB carries the SQLite dialect; pass the same config's advanced fields
-// (e.g. Encryption) straight through to the driver.
+// OpenConfig opens SQLite from a full gosqlite.Config, for callers that need a
+// custom VFS or non-default pragmas/pool sizing. The returned liteorm.DB carries
+// the SQLite dialect. For at-rest encryption use OpenEncrypted or
+// OpenEncryptedConfig, which register the cipher VFS for you.
 func OpenConfig(cfg gosqlite.Config, opts ...liteorm.Option) (*liteorm.DB, error) {
 	g, err := gosqlite.Open(cfg)
 	if err != nil {
@@ -39,21 +40,40 @@ func OpenConfig(cfg gosqlite.Config, opts ...liteorm.Option) (*liteorm.DB, error
 	return liteorm.New(&conn{gdb: g}, sqlgen.SQLite, opts...), nil
 }
 
-// OpenEncrypted opens an at-rest-encrypted SQLite database at path using
-// gosqlite's default Adiantum cipher (a 32-byte key). Encryption refuses
-// ":memory:" and is mutually exclusive with a custom VFS — see gosqlite's
-// Config.Encryption. The recommended pragma preset still applies.
+// OpenEncrypted opens an at-rest-encrypted SQLite database at path using the
+// default Adiantum cipher (a 32-byte key). Encryption refuses ":memory:" (there
+// is nothing to encrypt at rest). The recommended pragma preset still applies.
+// For AES-XTS, a non-default page size, or a passphrase-derived key, use
+// OpenEncryptedConfig.
 func OpenEncrypted(path string, key []byte, opts ...liteorm.Option) (*liteorm.DB, error) {
-	return OpenConfig(gosqlite.Config{
-		Path:       path,
-		Pragmas:    gosqlite.RecommendedPragmas(),
-		Encryption: &gosqlite.Encryption{Key: key, Cipher: gosqlite.Adiantum},
-	}, opts...)
+	return OpenEncryptedConfig(gosqlite.Config{
+		Path:    path,
+		Pragmas: gosqlite.RecommendedPragmas(),
+	}, crypto.Options{Key: key}, opts...)
+}
+
+// OpenEncryptedConfig opens an at-rest-encrypted SQLite database from a full
+// gosqlite.Config plus crypto.Options, for callers that need AES-XTS
+// (crypto.AESXTS, a 64-byte key), a non-default PageSize, a passphrase-derived
+// key (crypto.DeriveKey), or custom pragmas/pool sizing. The cipher is a VFS that
+// gosqlite.org/vfs/crypto registers and tears down on Close, so cfg.VFS must be
+// empty. Encryption refuses an in-memory database.
+//
+// The page-level cipher format is unchanged, so a database encrypted by an
+// earlier liteorm release opens with the same key. When reopening an existing
+// database created with a non-default page size, set crypto.Options.PageSize to
+// match its PRAGMA page_size (it defaults to 4096); a mismatch fails to decrypt.
+func OpenEncryptedConfig(cfg gosqlite.Config, copts crypto.Options, opts ...liteorm.Option) (*liteorm.DB, error) {
+	g, err := crypto.Open(cfg, copts)
+	if err != nil {
+		return nil, err
+	}
+	return liteorm.New(&conn{gdb: g}, sqlgen.SQLite, opts...), nil
 }
 
 // Conn returns the underlying *gosqlite.DB for a liteorm.Session opened by this
 // package, giving the SQLite-specific subpackages (search, changeset) access to
-// gosqlite's typed surface (vec, FTS5, sessions) and the encryption recorder.
+// gosqlite's typed surface (vec, FTS5, sessions) and the blobstore engine.
 // The second result is false for any other backend or for a transaction handle
 // (those features operate at the database level). It never leaks a gosqlite type
 // into the core: this lives in the SQLite backend, which already depends on it.

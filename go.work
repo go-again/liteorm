@@ -13,6 +13,7 @@ use (
 	./examples/encryption
 	./examples/fixtures
 	./examples/gormport
+	./examples/largeobjects
 	./examples/logging
 	./examples/migrate
 	./examples/orm

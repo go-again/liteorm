@@ -15,15 +15,16 @@ orm.AutoMigrate[Note](ctx, db)
 orm.NewRepo[Note](db).Create(ctx, &Note{Text: "…"})
 ```
 
-The on-disk file is ciphertext; reopening requires the same key, and a wrong key fails rather than returning garbage. For full control over the cipher, pragmas, or pool sizing, open from a `gosqlite.Config`:
+The on-disk file is ciphertext; reopening requires the same key, and a wrong key fails rather than returning garbage. For full control over the cipher, pragmas, or pool sizing, use `sqlite.OpenEncryptedConfig`, which pairs a `gosqlite.Config` with the cipher options from `gosqlite.org/vfs/crypto`:
 
 ```go
-db, err := sqlite.OpenConfig(gosqlite.Config{
-	Path:       "app.db",
-	Pragmas:    gosqlite.RecommendedPragmas(),
-	Encryption: &gosqlite.Encryption{Key: key, Cipher: gosqlite.Adiantum},
-})
+db, err := sqlite.OpenEncryptedConfig(
+	gosqlite.Config{Path: "app.db", Pragmas: gosqlite.RecommendedPragmas()},
+	crypto.Options{Key: key, Cipher: crypto.Adiantum},
+)
 ```
+
+The default `crypto.Adiantum` cipher takes a 32-byte key; pass `crypto.AESXTS` with a 64-byte key when a compliance regime mandates AES. To derive a correctly-sized key from a passphrase, use `crypto.DeriveKey(passphrase, salt, cipher)` (Argon2id) and persist the salt alongside the file — it must be at least 16 bytes and unique per database.
 
 ## Key handling
 

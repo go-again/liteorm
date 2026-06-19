@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	gosqlite "gosqlite.org"
+	"gosqlite.org/vfs/crypto"
 	liteorm "liteorm.org"
 	"liteorm.org/dialect/sqlite"
 )
@@ -57,6 +59,60 @@ func TestOpenEncrypted_RoundTrip(t *testing.T) {
 	if err == nil {
 		var leaked string
 		if err := one(ctx, db3, &leaked, `SELECT msg FROM secrets WHERE id = 1`); err == nil {
+			t.Fatalf("wrong key read plaintext %q — not actually encrypted", leaked)
+		}
+		db3.Close()
+	}
+}
+
+// TestOpenEncryptedConfig_AESXTS exercises the full-control entry point with a
+// non-default cipher (AES-XTS-256, a 64-byte key): write, reopen with the same
+// key/cipher and read back, and confirm a wrong key cannot decrypt.
+func TestOpenEncryptedConfig_AESXTS(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "aes.db")
+	key := make([]byte, 64) // AES-XTS-256 = two 32-byte keys
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	cfg := func() gosqlite.Config {
+		return gosqlite.Config{Path: path, Pragmas: gosqlite.RecommendedPragmas()}
+	}
+
+	db, err := sqlite.OpenEncryptedConfig(cfg(), crypto.Options{Key: key, Cipher: crypto.AESXTS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE t (id INTEGER PRIMARY KEY, msg TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO t (msg) VALUES (?)`, "classified"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db2, err := sqlite.OpenEncryptedConfig(cfg(), crypto.Options{Key: key, Cipher: crypto.AESXTS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+	var msg string
+	if err := one(ctx, db2, &msg, `SELECT msg FROM t WHERE id = 1`); err != nil {
+		t.Fatalf("read with correct key/cipher: %v", err)
+	}
+	if msg != "classified" {
+		t.Fatalf("msg = %q, want the plaintext back", msg)
+	}
+
+	wrong := make([]byte, 64)
+	for i := range wrong {
+		wrong[i] = 0xAA
+	}
+	if db3, err := sqlite.OpenEncryptedConfig(cfg(), crypto.Options{Key: wrong, Cipher: crypto.AESXTS}); err == nil {
+		var leaked string
+		if err := one(ctx, db3, &leaked, `SELECT msg FROM t WHERE id = 1`); err == nil {
 			t.Fatalf("wrong key read plaintext %q — not actually encrypted", leaked)
 		}
 		db3.Close()

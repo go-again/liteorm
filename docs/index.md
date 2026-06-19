@@ -31,6 +31,7 @@ New here? Start with **[Getting started](getting-started.md)**, then pick the fr
 **Backend-specific**
 
 - [SQLite search](guides/sqlite-search.md) — vector, full-text, and hybrid (reciprocal-rank-fusion) search.
+- [Large objects](guides/large-objects.md) — store files, uploads, and growing binary content as streamed `io.ReaderAt`/`io.WriterAt`, never loaded whole.
 - [At-rest encryption](guides/encryption.md) — open an encrypted SQLite database; the on-disk file is ciphertext, readable only with the key.
 - [SQLite changesets](guides/sqlite-changeset.md) — capture, apply, invert, and concat changesets for audit and replication.
 - [Postgres](guides/postgres.md) — LISTEN/NOTIFY and the typed JSONB / array operators.

@@ -125,6 +125,12 @@ func migrateSchema(ctx context.Context, sess liteorm.Session, s *Schema, cfg mig
 	if err := provisionSearch(ctx, sess, s, d); err != nil {
 		return err
 	}
+	// Provision any declared large-object stores. Loud error if a LOB field is
+	// present but no provisioner is registered (the dialect/sqlite/lob import is
+	// missing); a no-op for a model with no LOB fields.
+	if err := provisionLOBs(ctx, sess, s); err != nil {
+		return err
+	}
 	return nil
 }
 
