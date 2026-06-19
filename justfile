@@ -7,7 +7,10 @@
 
 set dotenv-load := true
 
-mods := `awk '/^use \(/{f=1;next} /^\)/{f=0;next} f{gsub(/[ \t]/,"");printf "%s ",$0}' go.work`
+# Only in-repo entries (`.`/`./…`) are swept; an out-of-repo overlay like
+# `use ../../sqlite` in a local go.work is skipped here (and rejected outright in
+# the committed go.work by `just work-check`).
+mods := `awk '/^use \(/{f=1;next} /^\)/{f=0;next} f{gsub(/[ \t]/,"");if($0~/^\./&&$0!~/^\.\./)printf "%s ",$0}' go.work`
 
 # Default recipe: a fast pre-commit gate.
 default: build test lint
@@ -65,8 +68,22 @@ test-race:
 
 # fmt-check runs first — cheapest, and the most common local-only CI failure.
 
-# Lint = format check + vet + golangci-lint + gopls modernize (CI parity).
-lint: fmt-check vet golangci modernize
+# Lint = workspace check + format check + vet + golangci-lint + gopls modernize (CI parity).
+lint: work-check fmt-check vet golangci modernize
+
+# Reject an out-of-repo `use` entry in the committed go.work. A local overlay for
+# building against a sibling checkout (e.g. `use ../../sqlite`) must stay local —
+# committed, it would break CI, whose checkout has no such sibling, and silently
+# skew the gated module set.
+work-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bad=$(awk '/^use \(/{f=1;next} /^\)/{f=0;next} f{gsub(/[ \t]/,"");if($0~/^\.\./)print}' go.work)
+    if [ -n "$bad" ]; then
+        echo "go.work lists out-of-repo modules (keep these in a local overlay, not committed):"
+        echo "$bad"; exit 1
+    fi
+    echo "workspace ok"
 
 # go vet across every module.
 vet:

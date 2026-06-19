@@ -70,6 +70,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+      - name: workspace (no out-of-repo modules in go.work)
+        shell: bash
+        run: |
+          bad=$(awk '/^use \(/{f=1;next} /^\)/{f=0;next} f{gsub(/[ \t]/,"");if($0~/^\.\./)print}' go.work)
+          if [ -n "$bad" ]; then
+            echo "go.work lists out-of-repo modules (keep a sibling overlay local, not committed):"
+            echo "$bad"; exit 1
+          fi
       - name: gofmt
         shell: bash
         run: |
