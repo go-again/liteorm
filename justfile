@@ -238,47 +238,94 @@ clean:
     @find . -name '*.test' -not -path './.*' -delete 2>/dev/null || true
 
 # --- Release ---------------------------------------------------------------
-# Prepare a multi-module release. Bumps every internal cross-module require
-# (liteorm.org*) to VERSION across the publishable modules — and gosqlite.org to
-# GOSQLITE when given — verifies the workspace still builds, then PRINTS the exact
-# ordered tag/push plan. It edits go.mod only: it never commits, tags, or pushes
-# (run the printed git commands yourself). Module set and dependency edges are
-# discovered from go.work + each go.mod, so this adapts as modules come and go.
+# Prepare a multi-module release. By default this is SELECTIVE: it tags only the
+# modules whose tracked files changed since their last tag — most releases touch a
+# subset, so unchanged modules keep their existing tag instead of accruing a fresh
+# one every release. Pass `all` as the 3rd arg for a LOCKSTEP release that bumps
+# and tags every publishable module (use it for a breaking root change, where
+# dependents must be re-released even if their own code didn't move).
 #
-# Local `replace` directives are dev-only and ignored by consumers, so they stay.
+# For each released module it bumps the internal liteorm.org* requires to the right
+# version — the new VERSION for deps also being released, otherwise that dep's
+# current latest tag — pins gosqlite.org to GOSQLITE when given, verifies the
+# workspace builds, then PRINTS the ordered tag/push plan. It edits go.mod only: it
+# never commits, tags, or pushes (run the printed git commands yourself). Local
+# `replace` directives are dev-only and stay; the module set and dependency edges
+# are discovered from go.work + each go.mod.
 #
-#   just release v0.1.0           # bump liteorm.org* requires to v0.1.0
-#   just release v0.1.0 v0.3.0    # also pin gosqlite.org@v0.3.0 (required before
-#                                 # dialect/sqlite can be published functionally)
-release VERSION GOSQLITE="":
+#   just release v0.10.0           # selective: tag only changed modules
+#   just release v0.10.0 v0.9.0    # also pin gosqlite.org@v0.9.0 in released modules
+#   just release v0.10.0 '' all    # lockstep: bump + tag every publishable module
+release VERSION GOSQLITE="" ALL="":
     #!/usr/bin/env bash
     set -euo pipefail
-    v='{{ VERSION }}'; gq='{{ GOSQLITE }}'
+    v='{{ VERSION }}'; gq='{{ GOSQLITE }}'; all='{{ ALL }}'
     semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
     [[ "$v"  =~ $semver ]] || { echo "✗ VERSION must look like v1.2.3 or v1.2.3-rc.1 (got '$v')"  >&2; exit 1; }
     [[ -z "$gq" || "$gq" =~ $semver ]] || { echo "✗ GOSQLITE must look like v1.2.3 (got '$gq')" >&2; exit 1; }
+    [[ -z "$all" || "$all" == "all" ]] || { echo "✗ 3rd arg must be empty or 'all' (got '$all')" >&2; exit 1; }
+    mods_list="{{ mods }}"
 
     # Publishable = every workspace module except the examples and the test-only
     # conformance module (those are never tagged or imported by anyone).
     publishable() { case "$1" in ./examples/*|./conformance) return 1 ;; *) return 0 ;; esac; }
+    # tagpfx DIR -> tag prefix ("" for root, "dialect/sqlite/" for a submodule).
+    tagpfx() { case "$1" in .|./) echo "" ;; *) echo "${1#./}/" ;; esac; }
+    # lastver DIR -> highest existing version tag for that module, or "" if none.
+    lastver() {
+        local pfx; pfx=$(tagpfx "$1")
+        if [ -z "$pfx" ]; then git tag -l 'v*' | sort -V | tail -1
+        else git tag -l "${pfx}v*" | sed "s#^${pfx}##" | sort -V | tail -1; fi
+    }
+    # changed DIR -> exit 0 if the module's tracked files differ from its last tag.
+    # A never-tagged module counts as changed; root excludes every nested module.
+    changed() {
+        local last; last=$(lastver "$1")
+        [ -z "$last" ] && return 0
+        local pfx; pfx=$(tagpfx "$1")
+        if [ -z "$pfx" ]; then
+            local o; local paths=(.)
+            for o in $mods_list; do case "$o" in .|./) ;; *) paths+=( ":(exclude)${o#./}" ) ;; esac; done
+            ! git diff --quiet "$last" HEAD -- "${paths[@]}"
+        else
+            ! git diff --quiet "${pfx}${last}" HEAD -- "${1#./}"
+        fi
+    }
 
-    echo "→ bumping internal requires to $v${gq:+, gosqlite.org to $gq}"
-    bumped=0
-    for m in {{ mods }}; do
+    # Decide the release set (changed modules, or all publishable under `all`).
+    rel=(); skip=()
+    for m in $mods_list; do
         publishable "$m" || continue
         [ -f "$m/go.mod" ] || continue
-        # Each REQUIRED liteorm.org* path in this go.mod. Require lines read
-        # "<path> v<ver>"; replace lines use "=>" and the module line carries no
-        # version, so neither matches. The space before 'v' stops liteorm.org from
-        # also catching liteorm.org/gen.
+        if [ -n "$all" ] || changed "$m"; then rel+=("$m"); else skip+=("$m"); fi
+    done
+    if [ ${#rel[@]} -eq 0 ]; then
+        echo "→ no publishable module changed since its last tag — nothing to release."
+        exit 0
+    fi
+
+    in_rel() { local x; for x in "${rel[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
+    # targetver DIR -> VERSION when DIR is part of this release, else its current tag.
+    targetver() { if in_rel "$1"; then echo "$v"; else lastver "$1"; fi; }
+    # path_dir liteorm.org[/sub] -> the module directory it refers to.
+    path_dir() { case "$1" in liteorm.org) echo "." ;; liteorm.org/*) echo "./${1#liteorm.org/}" ;; esac; }
+    label() { local m; for m in "$@"; do [ "$m" = . ] && printf 'liteorm.org ' || printf '%s ' "${m#./}"; done; }
+
+    echo "→ releasing $v: $(label "${rel[@]}")"
+    [ ${#skip[@]} -gt 0 ] && echo "  kept at current tag: $(label "${skip[@]}")"
+    [ -n "$all" ] && echo "  (all: lockstep over every publishable module)"
+
+    echo "→ bumping internal requires${gq:+, gosqlite.org to $gq}"
+    for m in "${rel[@]}"; do
         for p in $(grep -oE "liteorm\.org(/[A-Za-z0-9._/-]+)? v[0-9][^[:space:]]*" "$m/go.mod" | sed -E 's/ v.*//' | sort -u); do
-            (cd "$m" && go mod edit -require="$p@$v"); echo "    $m: $p → $v"; bumped=1
+            dep=$(path_dir "$p"); tv=$(targetver "$dep")
+            [ -n "$tv" ] || { echo "✗ $m requires $p, which has no released version to point at — release it too, or use 'all'" >&2; exit 1; }
+            (cd "$m" && go mod edit -require="$p@$tv"); echo "    $m: $p → $tv"
         done
         if [ -n "$gq" ] && grep -qE "(^|[[:space:]])gosqlite\.org v[0-9]" "$m/go.mod"; then
-            (cd "$m" && go mod edit -require="gosqlite.org@$gq"); echo "    $m: gosqlite.org → $gq"; bumped=1
+            (cd "$m" && go mod edit -require="gosqlite.org@$gq"); echo "    $m: gosqlite.org → $gq"
         fi
     done
-    [ "$bumped" -eq 1 ] || echo "    (no internal requires found to bump)"
 
     echo "→ verifying the workspace still builds (go.work resolves modules locally)"
     just build
@@ -290,19 +337,15 @@ release VERSION GOSQLITE="":
     echo
     echo "════════ RELEASE PLAN — run these yourself; nothing below was executed ════════"
     echo "  git add -A && git commit -m 'release $v'"
-    echo "  git tag $v                              # root module: liteorm.org"
-    for m in {{ mods }}; do
-        publishable "$m" || continue
-        case "$m" in .|./) continue ;; esac         # root tagged above
-        echo "  git tag ${m#./}/$v"
+    for m in "${rel[@]}"; do
+        if [ "$m" = "." ] || [ "$m" = "./" ]; then echo "  git tag $v                              # root module: liteorm.org"
+        else echo "  git tag ${m#./}/$v"; fi
     done
-    echo "  git push origin HEAD --tags             # commit + every tag, together"
+    echo "  git push origin HEAD --tags             # commit + the tag(s), together"
+    [ ${#skip[@]} -gt 0 ] && echo "  # not re-tagged (unchanged, still resolvable at their last tag): $(label "${skip[@]}")"
     echo
     echo "  Before consumers can 'go get' these, ensure:"
     echo "    • the liteorm.org go-import vanity meta is served (module path → GitHub repo)"
     if [ -n "$gq" ]; then
         echo "    • gosqlite.org@$gq is already a published tag"
-    else
-        echo "    • dialect/sqlite still requires its current gosqlite.org version — re-run with a"
-        echo "      published gosqlite version as the 2nd arg before publishing dialect/sqlite"
     fi
