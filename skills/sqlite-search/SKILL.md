@@ -73,7 +73,12 @@ Query builders (re-exported, no gosqlite import): `Term`, `Phrase`, `Prefix`, `A
 
 ## Custom SQL functions / REGEXP
 
-gosqlite registers scalar functions globally, so they work through liteorm with no glue: blank-import `gosqlite.org/ext/regexp/auto`, then `query.Select[T](db).Where("col REGEXP ?", pattern)`.
+gosqlite registers scalar functions globally, so they work through liteorm with no glue: blank-import `gosqlite.org/ext/regexp/auto`, then either write the operator inline — `query.Select[T](db).Where("col REGEXP ?", pattern)` — or use the `sqlite.WhereRegex(column, pattern)` helper, which returns the fragment and bind args and, when the pattern is left-anchored (`^…`), prepends a `GLOB` prefix so SQLite can range-scan an index on the column and run the RE2 match only on the survivors (an unanchored pattern falls back to a plain `REGEXP` scan):
+
+```go
+frag, args := sqlite.WhereRegex("title", `^Intro to .* with Go$`)
+rows, _ := query.Select[Doc](db).Where(frag, args...).All(ctx)
+```
 
 ## Pitfalls
 

@@ -82,7 +82,7 @@ The vector metrics are `orm.Cosine` (the usual choice for normalized embeddings)
 
 ## Low-level building blocks
 
-When you manage the index lifecycle yourself — no model, or a sidecar you provision and backfill on your own schedule — the constructors give you direct handles. `NewVector` and `NewFullText` create (idempotently) or open a sidecar; `Add` upserts a row keyed by your primary key; `Search` returns ranked keys and `Load` fetches the model rows in that order.
+When you manage the index lifecycle yourself — no model, or a sidecar you provision and backfill on your own schedule — the constructors give you direct handles. `NewVector` and `NewFullText` create (idempotently) or open a sidecar; `Add` upserts a row keyed by your primary key; `Search` returns ranked keys and `Fetch` fetches the model rows in that order.
 
 ```go
 v, _ := search.NewVector(ctx, db, "doc_vecs", dim, search.Cosine)
@@ -95,9 +95,18 @@ f.Add(ctx, doc.ID, doc.Title+" "+doc.Body)
 keys, _ = f.Search(ctx, search.Term("rocket"), 5)
 ```
 
-`SearchScored` reports each vector neighbour's raw distance (smaller is nearer), and `search.Hybrid` fuses an explicit `Vector` and `FullText` with reciprocal rank fusion — the same fusion `Fuse` runs, on handles you hold yourself. `Hybrid` and `Fuse` take optional knobs: `search.WithK` (the RRF damping constant) and `search.WithWeights` (weighting the vector and full-text rankings, in that order).
+`SearchScored` reports each vector neighbour's raw distance (smaller is nearer), and `search.Hybrid` fuses an explicit `Vector` and `FullText` with reciprocal rank fusion — the same fusion the searcher's `.Hybrid` runs, on handles you hold yourself. `Hybrid` takes optional knobs: `search.WithK` (the RRF damping constant) and `search.WithWeights` (weighting the vector and full-text rankings, in that order).
 
 `OpenVector` and `OpenFullText` attach to an already-provisioned sidecar (the shape `AutoMigrate` creates) without re-creating it — the read-path counterparts to the `New*` constructors.
+
+## Regular-expression filters
+
+Beyond the search sidecars, the SQLite backend matches RE2 regular expressions through gosqlite's globally registered `REGEXP` operator. Blank-import `gosqlite.org/ext/regexp/auto` to register it, then build the predicate with `sqlite.WhereRegex`, which returns a WHERE fragment and its bind args. When the pattern is left-anchored (`^…`) it prepends a `GLOB` prefix so SQLite can range-scan an index on the column and run the regex only on the survivors; an unanchored pattern falls back to a plain `REGEXP` scan.
+
+```go
+frag, args := sqlite.WhereRegex("title", `^Intro to .* with Go$`)
+rows, _ := query.Select[Doc](db).Where(frag, args...).All(ctx)
+```
 
 ## See also
 
