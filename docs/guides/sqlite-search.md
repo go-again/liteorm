@@ -99,6 +99,37 @@ keys, _ = f.Search(ctx, search.Term("rocket"), 5)
 
 `OpenVector` and `OpenFullText` attach to an already-provisioned sidecar (the shape `AutoMigrate` creates) without re-creating it — the read-path counterparts to the `New*` constructors.
 
+## The MATCH operator in a composed query
+
+The typed searcher above returns *ranked* models. When you instead want the SQLite `MATCH` operator as a plain predicate — to filter an FTS5, spellfix1, or sqlite-vec virtual table inside an ordinary `query.Select` / `orm.Repo` chain, composed with `OrderBy`/`Limit`/other filters — use `query.Match(col, q)`. It is feature-gated on `dialect.FeatMatch`, so it is rejected at build time on a non-SQLite backend rather than emitting unsupported SQL.
+
+```go
+hit, err := orm.NewRepo[Vocab](db).
+	Filter(query.Match("word", term), query.Col[int]("scope").Le(2)).
+	OrderBy("distance ASC").
+	First(ctx)
+```
+
+Reach for `query.Match` when you want the operator inside your own query; reach for `search.For[T]` when you want ranked results.
+
+## Fuzzy correction with spellfix1
+
+gosqlite's spellfix1 extension provides "did you mean…" spelling correction over a word list. A spellfix1 vocabulary is a *global* table, not a per-model sidecar like FTS5/vec0, so it isn't declared on a model — instead `search.NewSpellfix` gives you a typed handle that creates it, populates it, and corrects terms, with no hand-written SQL:
+
+```go
+import "liteorm.org/dialect/sqlite/search"
+
+sf, _ := search.NewSpellfix(ctx, db, "vocab")       // creates the vtab (idempotent)
+_ = sf.Add(ctx, "kennedy", "jefferson", "lincoln")  // one transaction; duplicates ignored
+
+hits, _ := sf.Correct(ctx, "kenedy", search.WithLimit(3)) // nearest first, by edit distance
+// hits[0].Word == "kennedy", hits[0].Distance > 0
+```
+
+`Correct` returns `[]Correction{Word, Distance, Score, MatchLen}`, bounded by `WithMaxDistance(n)` / `WithLimit(n)`; `Size` reports the distinct word count, `Drop` removes the vocabulary, and `OpenSpellfix` attaches to an existing one. Importing the `search` package registers the spellfix1 module, so the handle works with no extra wiring.
+
+To instead fold a vocabulary match into a *larger* query — joining it against other tables, or adding filters — `query.Match("word", term)` works against the vtab directly (bind a model to the vocab table and `OrderBy("distance ASC")`), the same way you'd use any other predicate.
+
 ## Regular-expression filters
 
 Beyond the search sidecars, the SQLite backend matches RE2 regular expressions through gosqlite's globally registered `REGEXP` operator. Blank-import `gosqlite.org/ext/regexp/auto` to register it, then build the predicate with `sqlite.WhereRegex`, which returns a WHERE fragment and its bind args. When the pattern is left-anchored (`^…`) it prepends a `GLOB` prefix so SQLite can range-scan an index on the column and run the regex only on the survivors; an unanchored pattern falls back to a plain `REGEXP` scan.

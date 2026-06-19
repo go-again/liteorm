@@ -71,6 +71,29 @@ docs, _ := search.Fetch[Doc](ctx, db, keys)                 // or FetchScored fr
 
 Query builders (re-exported, no gosqlite import): `Term`, `Phrase`, `Prefix`, `And`, `Or`, `Not`, `Near`, `Column`, `Raw`. Metrics: `orm.L2` (default), `orm.Cosine`, `orm.L1`, `orm.Hamming`. RRF tuning: `search.WithK(60)`, `search.WithWeights(wVec, wText)`.
 
+## MATCH in a composed query
+
+`query.Match("col", q)` is the SQLite `MATCH` operator as a composable predicate — for filtering an FTS5 / spellfix1 / sqlite-vec virtual table inside an ordinary `query.Select` or `orm.Repo` chain, alongside `OrderBy`/`Limit`/other `Filter` predicates. It is feature-gated (rejected at build time off SQLite). Narrower than `search.For[T]` (which returns *ranked* models): use `Match` when you want the operator inside your own query, `search.For[T]` when you want ranking.
+
+```go
+hit, _ := orm.NewRepo[Vocab](db).
+    Filter(query.Match("word", term), query.Col[int]("scope").Le(2)).
+    OrderBy("distance ASC").
+    First(ctx)
+```
+
+## Fuzzy correction (spellfix1)
+
+A spellfix1 vocabulary is a *global* virtual table (not a per-model sidecar), so it isn't declared on a model — `search.NewSpellfix` gives a typed handle (create + populate + correct), no raw SQL:
+
+```go
+sf, _ := search.NewSpellfix(ctx, db, "vocab")             // create (idempotent)
+_ = sf.Add(ctx, "kennedy", "jefferson", "lincoln")        // one tx; dups ignored
+hits, _ := sf.Correct(ctx, "kenedy", search.WithLimit(3)) // []Correction{Word,Distance,…}, nearest first
+```
+
+Also `Size`, `Drop`, `OpenSpellfix`, `WithMaxDistance(n)`. Importing the `search` package registers the module. To fold a vocabulary match into a *larger* query, `query.Match("word", term)` works against the vtab directly (bind a model, `OrderBy("distance ASC")`).
+
 ## Custom SQL functions / REGEXP
 
 gosqlite registers scalar functions globally, so they work through liteorm with no glue: blank-import `gosqlite.org/ext/regexp/auto`, then either write the operator inline — `query.Select[T](db).Where("col REGEXP ?", pattern)` — or use the `sqlite.WhereRegex(column, pattern)` helper, which returns the fragment and bind args and, when the pattern is left-anchored (`^…`), prepends a `GLOB` prefix so SQLite can range-scan an index on the column and run the RE2 match only on the survivors (an unanchored pattern falls back to a plain `REGEXP` scan):
