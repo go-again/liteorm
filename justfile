@@ -343,18 +343,23 @@ release VERSION GOSQLITE="" ALL="":
     echo "→ go.mod / go.sum changes:"
     git diff --stat -- '*go.mod' '*go.sum' 2>/dev/null || echo "    (not a git repo — review the diffs by hand)"
 
+    # The plan below is emitted as bare commands (no inline comments) so the whole
+    # block copy-pastes cleanly — zsh, unlike bash, does not treat '#' as a comment
+    # interactively. Context goes here, above the block; caveats go below it.
     echo
-    echo "════════ RELEASE PLAN — run these yourself; nothing below was executed ════════"
-    echo "  git add -u && git commit -m 'release $v'   # -u: only the tracked go.mod/go.sum bumps, never build artifacts"
+    echo "→ commits with 'git add -u' (only the tracked go.mod/go.sum bumps — never build artifacts),"
+    echo "  tags the root as '$v' and each changed submodule as '<path>/$v'."
+    [ ${#skip[@]} -gt 0 ] && echo "  Unchanged, kept at their current tag: $(label "${skip[@]}")"
+    echo
+    echo "──────── RELEASE PLAN (copy/paste everything between the lines) ────────"
+    echo "git add -u && git commit -m 'release $v'"
     for m in "${rel[@]}"; do
-        if [ "$m" = "." ] || [ "$m" = "./" ]; then echo "  git tag $v                              # root module: liteorm.org"
-        else echo "  git tag ${m#./}/$v"; fi
+        if [ "$m" = "." ] || [ "$m" = "./" ]; then echo "git tag $v"
+        else echo "git tag ${m#./}/$v"; fi
     done
-    echo "  git push origin HEAD --tags             # commit + the tag(s), together"
-    [ ${#skip[@]} -gt 0 ] && echo "  # not re-tagged (unchanged, still resolvable at their last tag): $(label "${skip[@]}")"
+    echo "git push origin HEAD --tags"
+    echo "───────────────────────────────────────────────────────────────────────"
     echo
-    echo "  Before consumers can 'go get' these, ensure:"
-    echo "    • the liteorm.org go-import vanity meta is served (module path → GitHub repo)"
-    if [ -n "$gq" ]; then
-        echo "    • gosqlite.org@$gq is already a published tag"
-    fi
+    echo "Before consumers can 'go get' these, ensure:"
+    echo "  • the liteorm.org go-import vanity meta is served (module path → GitHub repo)"
+    [ -n "$gq" ] && echo "  • gosqlite.org@$gq is already a published tag"
