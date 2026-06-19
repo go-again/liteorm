@@ -20,7 +20,14 @@ help:
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    for m in {{ mods }}; do (cd "$m" && go build ./...); done
+    # Send any executables (the example main packages) to a throwaway dir so no
+    # binaries are left in the tree. Modules with no main package error on "-o
+    # <dir>/" and fall back to an in-place compile check; a real compile error
+    # still surfaces through that fallback.
+    out="$(mktemp -d)"; trap 'rm -rf "$out"' EXIT
+    for m in {{ mods }}; do
+        (cd "$m" && { go build -o "$out/" ./... 2>/dev/null || go build ./...; })
+    done
     echo "build ok"
 
 # Run the test suite across every module.
@@ -323,7 +330,9 @@ release VERSION GOSQLITE="" ALL="":
             (cd "$m" && go mod edit -require="$p@$tv"); echo "    $m: $p → $tv"
         done
         if [ -n "$gq" ] && grep -qE "(^|[[:space:]])gosqlite\.org v[0-9]" "$m/go.mod"; then
-            (cd "$m" && go mod edit -require="gosqlite.org@$gq"); echo "    $m: gosqlite.org → $gq"
+            # gosqlite is an external dep (no local replace), so use `go get`, not
+            # `go mod edit` — it updates go.sum with the new version's hash too.
+            (cd "$m" && go get "gosqlite.org@$gq"); echo "    $m: gosqlite.org → $gq"
         fi
     done
 
@@ -331,12 +340,12 @@ release VERSION GOSQLITE="" ALL="":
     just build
 
     echo
-    echo "→ go.mod changes:"
-    git diff --stat -- '*go.mod' 2>/dev/null || echo "    (not a git repo — review go.mod diffs by hand)"
+    echo "→ go.mod / go.sum changes:"
+    git diff --stat -- '*go.mod' '*go.sum' 2>/dev/null || echo "    (not a git repo — review the diffs by hand)"
 
     echo
     echo "════════ RELEASE PLAN — run these yourself; nothing below was executed ════════"
-    echo "  git add -A && git commit -m 'release $v'"
+    echo "  git add -u && git commit -m 'release $v'   # -u: only the tracked go.mod/go.sum bumps, never build artifacts"
     for m in "${rel[@]}"; do
         if [ "$m" = "." ] || [ "$m" = "./" ]; then echo "  git tag $v                              # root module: liteorm.org"
         else echo "  git tag ${m#./}/$v"; fi
