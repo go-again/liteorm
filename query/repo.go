@@ -91,17 +91,19 @@ func (s *sliceRowSource[T]) Err() error { return nil }
 func (r *Repo[T]) Upsert(ctx context.Context, v *T, oc OnConflictSpec) error {
 	cols := scan.Columns[T](true)
 	update := oc.Update
-	if len(update) == 0 {
-		update = subtract(cols, oc.Columns)
-	}
-	if len(update) == 0 {
-		return fmt.Errorf("liteorm: upsert has no columns to update")
+	if !oc.Nothing {
+		if len(update) == 0 {
+			update = subtract(cols, oc.Columns)
+		}
+		if len(update) == 0 {
+			return fmt.Errorf("liteorm: upsert has no columns to update")
+		}
 	}
 	ins := sqlgen.Insert{
 		Table:      tableName[T](),
 		Columns:    cols,
 		Rows:       [][]any{scan.Values(v, cols)},
-		OnConflict: &sqlgen.Conflict{Columns: oc.Columns, Update: update},
+		OnConflict: &sqlgen.Conflict{Columns: oc.Columns, Update: update, Nothing: oc.Nothing},
 	}
 	return InsertCapturingPK(ctx, r.sess, ins, v)
 }
@@ -277,19 +279,31 @@ func (r *Repo[T]) Delete(ctx context.Context, keys ...any) error {
 	return err
 }
 
-// OnConflictSpec describes an upsert conflict target and the columns to update.
+// OnConflictSpec describes an upsert conflict target and what to do on a conflict.
 type OnConflictSpec struct {
 	Columns []string
 	Update  []string
+	Nothing bool
 }
 
 // OnConflict names the conflict-target columns. Chain DoUpdate to pick the
-// columns to overwrite; otherwise all non-conflict columns are updated.
+// columns to overwrite, or DoNothing to ignore the conflicting row; with neither,
+// all non-conflict columns are updated.
 func OnConflict(cols ...string) OnConflictSpec { return OnConflictSpec{Columns: cols} }
 
 // DoUpdate sets the columns to overwrite on conflict.
 func (o OnConflictSpec) DoUpdate(cols ...string) OnConflictSpec {
 	o.Update = cols
+	return o
+}
+
+// DoNothing makes the upsert ignore a conflicting row — INSERT ... ON CONFLICT DO
+// NOTHING, the typed form of INSERT OR IGNORE — instead of updating it. On MySQL
+// it renders a no-op ON DUPLICATE KEY UPDATE; on SQL Server, a MERGE with no WHEN
+// MATCHED arm. A skipped insert returns no generated key.
+func (o OnConflictSpec) DoNothing() OnConflictSpec {
+	o.Update = nil
+	o.Nothing = true
 	return o
 }
 

@@ -27,13 +27,28 @@ type Predicate struct {
 }
 
 // Column is a typed column token. Its operators take values of type V.
-type Column[V any] struct{ name string }
+type Column[V any] struct {
+	name string
+	tbl  string // optional table/alias qualifier (for correlated refs); "" = unqualified
+}
 
 // Col names a typed column, e.g. Col[string]("email").Eq("a@b.c").
 func Col[V any](name string) Column[V] { return Column[V]{name: name} }
 
+// Of qualifies the column with a table name or alias, so it renders
+// "table"."col" — for correlating a subquery to its outer query (see EqCol).
+func (c Column[V]) Of(table string) Column[V] { c.tbl = table; return c }
+
 func quoteCol(d dialect.Dialect, name string) string {
 	return string(d.QuoteIdent(nil, name))
+}
+
+// ref renders the column reference, qualified by its table/alias when set.
+func (c Column[V]) ref(d dialect.Dialect) string {
+	if c.tbl == "" {
+		return quoteCol(d, c.name)
+	}
+	return quoteCol(d, c.tbl) + "." + quoteCol(d, c.name)
 }
 
 func (c Column[V]) cmp(op string, v V) Predicate {
@@ -53,11 +68,52 @@ func (c Column[V]) Ge(v V) Predicate { return c.cmp(">=", v) }
 func (c Column[V]) Lt(v V) Predicate { return c.cmp("<", v) }
 func (c Column[V]) Le(v V) Predicate { return c.cmp("<=", v) }
 
-// Like matches a SQL LIKE pattern.
+// Like matches a SQL LIKE pattern. The pattern is bound verbatim, so its % and _
+// are wildcards — use HasPrefix/HasSuffix/Contains when you want a literal needle
+// with its wildcards escaped.
 func (c Column[V]) Like(pattern string) Predicate {
 	return Predicate{
 		render: func(d dialect.Dialect) (string, []any) {
 			return quoteCol(d, c.name) + " LIKE ?", []any{pattern}
+		},
+		cols: []string{c.name},
+	}
+}
+
+// HasPrefix/HasSuffix/Contains match a literal substring at the start / end /
+// anywhere in the column, escaping any LIKE metacharacters (% and _) in the needle
+// so they match literally — HasPrefix("100") will not match "100% off" on the %.
+// They render `col LIKE ? ESCAPE '~'` and are portable across all four backends.
+func (c Column[V]) HasPrefix(prefix string) Predicate { return c.likeEsc(escapeLike(prefix) + "%") }
+func (c Column[V]) HasSuffix(suffix string) Predicate { return c.likeEsc("%" + escapeLike(suffix)) }
+func (c Column[V]) Contains(sub string) Predicate     { return c.likeEsc("%" + escapeLike(sub) + "%") }
+
+func (c Column[V]) likeEsc(pattern string) Predicate {
+	return Predicate{
+		render: func(d dialect.Dialect) (string, []any) {
+			return quoteCol(d, c.name) + ` LIKE ? ESCAPE '~'`, []any{pattern}
+		},
+		cols: []string{c.name},
+	}
+}
+
+// escapeLike escapes the LIKE metacharacters % and _ (and the escape char ~) so a
+// user string matches literally under `LIKE ? ESCAPE '~'`. Tilde is the escape
+// character (not backslash) because a backslash in a SQL string literal is itself
+// special on MySQL — `ESCAPE '~'` is unambiguous on all four dialects.
+func escapeLike(s string) string {
+	return strings.NewReplacer("~", "~~", "%", "~%", "_", "~_").Replace(s)
+}
+
+// EqCol renders a column-to-column equality (c = other) — for correlating a
+// subquery to its outer query, e.g. inside an ExistsField subquery:
+// Col[int64]("post_id").EqCol(Col[int64]("id").Of("posts")). Only c is validated
+// against the (subquery's) model; other references an outer scope and is emitted
+// as written, so qualify it with Of.
+func (c Column[V]) EqCol(other Column[V]) Predicate {
+	return Predicate{
+		render: func(d dialect.Dialect) (string, []any) {
+			return c.ref(d) + " = " + other.ref(d), nil
 		},
 		cols: []string{c.name},
 	}

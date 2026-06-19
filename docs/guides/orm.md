@@ -154,6 +154,7 @@ err := posts.Save(ctx, &p)
 
 // Upsert: INSERT ... ON CONFLICT DO UPDATE in one statement. Name the conflict
 // column(s) and which columns to update (narrow them to preserve e.g. created_at).
+// Use .DoNothing() instead to ignore a conflicting row (portable INSERT OR IGNORE).
 err = posts.Upsert(ctx, &p, query.OnConflict("slug").DoUpdate("title", "body"))
 
 // FirstOrCreate: load the first row matching the conditions, or insert v if none

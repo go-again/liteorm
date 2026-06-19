@@ -34,6 +34,9 @@ _ = orm.NewRepo[User](db).CreateInBatches(ctx, users, 500) // one multi-row INSE
 ```go
 _ = orm.NewRepo[Language](db).Upsert(ctx, &Language{Code: "en", Name: "English"},
 	query.OnConflict("code").DoUpdate("name")) // narrow DoUpdate cols to preserve e.g. created_at
+
+// ignore a conflicting row instead of updating it — portable INSERT OR IGNORE:
+_ = orm.NewRepo[Visit](db).Upsert(ctx, &Visit{URL: u}, query.OnConflict("url").DoNothing())
 ```
 
 ## Fetch many rows by primary key
@@ -65,10 +68,11 @@ err := orm.NewRepo[User](db).Where("active = ?", true).
 
 ## Atomically increment a column
 
-Compute the new value in SQL — no read-modify-write race:
+Compute the new value in SQL — no read-modify-write race. `Inc`/`Dec` are the typed form; `SetExpr` handles any other expression:
 
 ```go
-_, err := query.Update[Post](db).SetExpr("views", "views + ?", 1).Where("id = ?", id).Exec(ctx)
+_, err := query.Update[Post](db).Inc("views", 1).Where("id = ?", id).Exec(ctx)
+// arbitrary expression: .SetExpr("views", "views + ?", 1)
 ```
 
 ## Eager-load only some related rows
@@ -85,6 +89,36 @@ orm.Load[Author, Post](ctx, db, authors, "Posts",
 
 ```go
 emails, _ := query.Pluck(ctx, query.Select[User](db).Filter(active), query.Col[string]("email")) // []string
+
+// a raw scalar expression (aggregate, function, rowid):
+max, _ := query.PluckExprFirst[Post, int64](ctx, query.Select[Post](db), "MAX(view_count)")
+```
+
+## Prefix or substring search (wildcards escaped)
+
+`HasPrefix`/`HasSuffix`/`Contains` escape `%` and `_` in the needle, so user input matches literally instead of acting as wildcards:
+
+```go
+// id LIKE 'a1b2%' — a "100%" needle would not match everything
+rows, _ := query.Select[Item](db).Filter(query.Col[string]("id").HasPrefix(idPrefix)).All(ctx)
+```
+
+## Project whether a related row exists
+
+`ExistsField` projects a correlated EXISTS as a boolean column (portable `CASE WHEN EXISTS …`), correlated with the typed `EqCol`:
+
+```go
+hasComment := query.ExistsField("has_comment",
+	query.Select[Comment](db).Filter(
+		query.Col[int64]("post_id").EqCol(query.Col[int64]("id").Of("posts"))))
+
+type row struct {
+	ID         int64
+	Title      string
+	HasComment bool
+}
+rows, _ := query.Into[Post, row](ctx, query.Select[Post](db).OrderBy("id"),
+	query.Name("id"), query.Name("title"), hasComment)
 ```
 
 ## Soft delete and restore

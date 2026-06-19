@@ -231,6 +231,46 @@ func Pluck[T any, V any](ctx context.Context, b *SelectBuilder[T], col Column[V]
 	return scan.Scalars[V](rows)
 }
 
+// PluckExpr projects a single raw scalar expression — not a typed column — and
+// returns the values as []V. It is the escape-hatch sibling of Pluck for
+// aggregates, functions, or implicit columns (MAX(x), COALESCE(a, b), LENGTH(t),
+// rowid, a window expression). The expression is emitted verbatim (not
+// column-validated) and may carry "?" markers bound by args; it honors the
+// builder's filters/order/limit.
+func PluckExpr[T any, V any](ctx context.Context, b *SelectBuilder[T], expr string, args ...any) ([]V, error) {
+	sel, err := b.resolved()
+	if err != nil {
+		return nil, err
+	}
+	d := b.sess.Dialect()
+	sel.Columns = nil
+	sel.ProjectionExprs = []sqlgen.Expr{{SQL: expr, Args: args}}
+	q, qargs, err := sel.Build(d)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := b.sess.QueryContext(ctx, q, qargs...)
+	if err != nil {
+		return nil, err
+	}
+	return scan.Scalars[V](rows)
+}
+
+// PluckExprFirst is PluckExpr returning only the first row's value (V's zero value
+// if no rows) — for a single-scalar read like
+// PluckExprFirst[ItemModel, int64](ctx, b, "MAX(updated_count)").
+func PluckExprFirst[T any, V any](ctx context.Context, b *SelectBuilder[T], expr string, args ...any) (V, error) {
+	var zero V
+	vs, err := PluckExpr[T, V](ctx, b, expr, args...)
+	if err != nil {
+		return zero, err
+	}
+	if len(vs) == 0 {
+		return zero, nil
+	}
+	return vs[0], nil
+}
+
 // Sum/Avg/Min/Max/CountCol are whole-set aggregate terminals: each builds
 // SELECT AGG(col) over b's filters/joins (ignoring order/limit) and returns the
 // scalar. NULL (e.g. an aggregate over no rows) returns R's zero value. For

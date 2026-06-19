@@ -56,6 +56,10 @@ const (
 	// 3.33+, and T-SQL's UPDATE … FROM on MSSQL). MySQL uses UPDATE … JOIN instead,
 	// so it is left off.
 	FeatUpdateFrom
+	// FeatMatch: the MATCH operator for SQLite virtual-table predicates (FTS5,
+	// spellfix1, sqlite-vec). SQLite only — Postgres/MySQL full-text use different
+	// operators and are not covered by this bit.
+	FeatMatch
 )
 
 // Has reports whether f includes all of the given feature bits.

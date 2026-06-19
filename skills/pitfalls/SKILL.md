@@ -32,7 +32,7 @@ The gotchas that trip people up, with the fix.
 ## Dialect-gated operators
 
 - **JSONB `Contains` (`@>`) and all array operators are Postgres-only.** The query builder rejects them at BUILD time on other dialects (a clear error, not opaque SQL at the DB). Plain JSON path extraction (`JSON("c").Key("k").Eq(...)`) is the exception — it works on SQLite too.
-- **Raw `Where("...")` fragments are not column-validated** — only typed `Filter` predicates are. Typos in a raw fragment fail at the database, not at build.
+- **Raw `Where("...")` fragments are not column-validated** — only typed `Filter` predicates are, so typos in a raw fragment fail at the database, not at build. Reach for a typed predicate first: `Eq`/`Like`/`HasPrefix`/`HasSuffix`/`Contains`/`In`/`EqCol`, `query.Match` (SQLite), `Update.Inc`/`Dec`, `OnConflict(...).DoNothing()`, and `ExistsField` cover most former raw fragments.
 
 ## Sessions & transactions
 

@@ -48,10 +48,15 @@ rows, _ := query.Into[Order, Stat](ctx,
 ```go
 query.Col[string]("category").Eq("books")
 query.Col[float64]("price").Gt(50)            // Eq Ne Gt Ge Lt Le
-query.Col[string]("name").Like("%Pro%")
+query.Col[string]("name").Like("%Pro%")             // raw pattern
+query.Col[string]("name").HasPrefix("Pro")          // HasSuffix / Contains — % and _ escaped literally
 query.Col[string]("category").In("books", "home")   // NotIn too
 query.Col[int64]("deleted_at").IsNull()             // IsNotNull too
+query.Col[int64]("post_id").EqCol(query.Col[int64]("id").Of("posts")) // column = column (correlation)
+query.Match("body", "rocket")                       // SQLite MATCH (FTS5/spellfix/vec); rejected off SQLite
 ```
+
+`HasPrefix`/`HasSuffix`/`Contains` escape `%`/`_` so user input matches literally (the safe substring search). `query.Match` is SQLite-only and feature-gated.
 
 Combine with `query.And(...)`, `query.Or(...)`, `query.Not(p)`:
 
@@ -97,6 +102,16 @@ query.Select[Product](sess).Filter(query.Exists(anyReview)).All(ctx)
 ```
 
 Subquery columns are validated when placed in the predicate, so the error surfaces from the outer terminal before any SQL runs. Placeholders are renumbered correctly per dialect.
+
+To *project* a correlated EXISTS as a boolean column (not filter on it), use `query.ExistsField(alias, sub)` in `Into`, correlating with `EqCol`. It renders a portable `CASE WHEN EXISTS (...) THEN 1 ELSE 0 END`, scanning into a `bool` on every backend:
+
+```go
+hasReview := query.ExistsField("has_review",
+    query.Select[Review](sess).Filter(
+        query.Col[int64]("product_id").EqCol(query.Col[int64]("id").Of("products"))))
+rows, _ := query.Into[Product, row](ctx, query.Select[Product](sess),
+    query.Name("id"), query.Name("name"), hasReview)
+```
 
 ## Set operations, locking, DISTINCT ON
 
@@ -178,7 +193,7 @@ stats, _ := query.Raw[catStat](ctx, sess,
     `SELECT category, count(*) AS items FROM products GROUP BY category`)
 ```
 
-`Raw[T]` needs T to be a struct. For a scalar result, scan it yourself via `sess.QueryContext` + `rows.Scan`, or use the codegen scalar path.
+`Raw[T]` needs T to be a struct. For a single scalar, use `query.Pluck[T, V](ctx, b, col)` (a typed column) or `query.PluckExpr[T, V](ctx, b, "MAX(x)")` / `PluckExprFirst` (a raw expression) → `[]V` / `V`.
 
 ## Repo (CRUD)
 
@@ -190,7 +205,7 @@ repo := query.NewRepo[T](sess)
 | --- | --- |
 | `Insert(ctx, *v)` | Generated PK read back into v via RETURNING (or LastInsertId). |
 | `InsertMany(ctx, vs)` | Bulk: pgx CopyFrom where available, else chunked multi-row VALUES. Does NOT read PKs back. |
-| `Upsert(ctx, *v, query.OnConflict("col").DoUpdate("c2","c3"))` | DoUpdate optional; defaults to all non-conflict columns. |
+| `Upsert(ctx, *v, query.OnConflict("col").DoUpdate("c2","c3"))` | DoUpdate optional (defaults to all non-conflict columns); `.DoNothing()` ignores the conflict (portable INSERT OR IGNORE). |
 | `Find(ctx, preds...)` | All rows matching the typed predicates. |
 | `Get(ctx, id)` | By primary key; `ErrNoRows` if missing. |
 | `Update(ctx, *v)` | Writes non-key columns, keyed by PK. |
@@ -198,14 +213,16 @@ repo := query.NewRepo[T](sess)
 
 ```go
 _ = repo.Upsert(ctx, &p, query.OnConflict("name").DoUpdate("stock", "price"))
+_ = repo.Upsert(ctx, &seen, query.OnConflict("url").DoNothing()) // first writer wins; dups skipped
 ```
 
 ## Multi-row UPDATE / DELETE
 
-The Repo writes one row by PK; `query.Update[T]` / `query.Delete[T]` write **many by condition**. `Set(col, v)` / `SetExpr(col, "raw", args...)`, `Where`/`Filter`, then `Exec(ctx) (int64 affected)` or `Returning(ctx) ([]T)` (the changed rows, via RETURNING/OUTPUT — errors on MySQL). A **WHERE-less write is refused** (use `Where("1 = 1")` to mean every row).
+The Repo writes one row by PK; `query.Update[T]` / `query.Delete[T]` write **many by condition**. `Set(col, v)` / `SetExpr(col, "raw", args...)` / `Inc(col, n)` / `Dec(col, n)`, `Where`/`Filter`, then `Exec(ctx) (int64 affected)` or `Returning(ctx) ([]T)` (the changed rows, via RETURNING/OUTPUT — errors on MySQL). A **WHERE-less write is refused** (use `Where("1 = 1")` to mean every row).
 
 ```go
 n, _ := query.Update[Product](sess).Set("active", false).Filter(query.Col[int64]("stock").Eq(0)).Exec(ctx)
+_, _ = query.Update[Product](sess).Inc("view_count", 1).Filter(query.Col[int64]("id").Eq(id)).Exec(ctx) // atomic col = col + 1
 rows, _ := query.Update[Product](sess).SetExpr("stock", "stock + ?", 100).Where("category = ?", "x").Returning(ctx)
 del, _ := query.Delete[Product](sess).Filter(query.Col[string]("category").Eq("legacy")).Exec(ctx)
 ```
@@ -216,7 +233,7 @@ del, _ := query.Delete[Product](sess).Filter(query.Col[string]("category").Eq("l
 
 - An unknown column in a `Filter` predicate is a build-time error, but a `Where("...")` raw fragment is not checked — typos in raw SQL fail at the DB.
 - `query.Repo.Delete` and the JSONB/array operators differ from the orm front-end's soft delete — see the orm-models and pitfalls skills.
-- `query.Raw[T]` expects a struct; a single-column scalar will not scan into `int64`/`string` directly.
+- `query.Raw[T]` expects a struct; for a single-column scalar use `query.Pluck` / `query.PluckExpr` instead (they scan into `[]V`).
 
 ## Deeper
 

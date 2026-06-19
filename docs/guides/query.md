@@ -72,10 +72,14 @@ Multiple predicates passed to `Filter` (or stacked across several `Filter` calls
 | --- | --- |
 | equality / inequality | `.Eq(v)` `.Ne(v)` |
 | ordering comparisons | `.Gt(v)` `.Ge(v)` `.Lt(v)` `.Le(v)` |
-| pattern match | `.Like("%pro%")` |
+| pattern match (raw pattern) | `.Like("%pro%")` |
+| literal substring (wildcards escaped) | `.HasPrefix("foo")` `.HasSuffix(".go")` `.Contains("ab")` |
 | set membership | `.In(a, b, c)` `.NotIn(a, b)` |
 | NULL tests | `.IsNull()` `.IsNotNull()` |
+| column vs column | `.EqCol(query.Col[V]("x").Of("t"))` |
 | IN a subquery | `.InQuery(sub)` `.NotInQuery(sub)` |
+
+`HasPrefix`/`HasSuffix`/`Contains` escape any `%`/`_` in the needle so it matches literally — the safe way to do a prefix/suffix/contains search on user input, where `.Like` would treat those characters as wildcards. On SQLite, `query.Match(col, q)` adds the `MATCH` operator for FTS5 / spellfix1 / sqlite-vec virtual tables (see [SQLite search](sqlite-search.md)); it composes in `Filter` like any predicate but is rejected at build time on other dialects.
 
 ### Combining predicates: And / Or / Not
 
@@ -212,7 +216,9 @@ The full set: `InnerJoin(table, on, args...)`, `LeftJoin`, `RightJoin`, `CrossJo
 
 ## Projecting columns
 
-By default the full model column set is selected. `Project(cols...)` overrides the SELECT list with raw column expressions — most often to select a single column for an IN-subquery, or to pull specific columns or aggregates.
+By default the full model column set is selected. `Project(cols...)` overrides the SELECT list with raw column expressions — most often to select a single column for an IN-subquery, or to pull specific columns or aggregates. For a custom result shape, `Into[T, R]` projects typed `Field`s (`Name`, `Column.Field`, the `AggAs` helpers, and `ExistsField` below) into a result struct `R`.
+
+To pull a single scalar into a slice, `Pluck(b, col)` returns one typed column as `[]V`; `PluckExpr[T, V](b, expr, args...)` does the same for a raw scalar expression — `MAX(x)`, `COALESCE(a, b)`, `LENGTH(t)`, `rowid` — and `PluckExprFirst` returns just the first value.
 
 ## Subqueries: IN and EXISTS
 
@@ -242,6 +248,22 @@ reviewed, err := query.Select[Product](db).
 	Filter(query.Exists(anyReview)).
 	OrderBy("id").
 	All(ctx)
+```
+
+To *project* whether a correlated subquery matches as a boolean result column (rather than filter on it), use `query.ExistsField(alias, sub)` in `Into`. Correlate the subquery to the outer row with the typed `EqCol` (`query.Col[V]("inner").EqCol(query.Col[V]("outer").Of("table"))`) instead of a raw `Where`. It renders a portable `CASE WHEN EXISTS (...) THEN 1 ELSE 0 END`, so it scans into a `bool` on every backend:
+
+```go
+hasReview := query.ExistsField("has_review",
+	query.Select[Review](db).Filter(
+		query.Col[int64]("product_id").EqCol(query.Col[int64]("id").Of("products"))))
+
+type row struct {
+	ID        int64
+	Name      string
+	HasReview bool
+}
+rows, err := query.Into[Product, row](ctx, query.Select[Product](db).OrderBy("id"),
+	query.Name("id"), query.Name("name"), hasReview)
 ```
 
 ## Set operations
@@ -423,6 +445,12 @@ restock := Product{Name: "USB Cable", Category: "electronics", Price: 8.49, Stoc
 err := repo.Upsert(ctx, &restock, query.OnConflict("name").DoUpdate("stock", "price"))
 ```
 
+To *ignore* a conflicting row instead of updating it — the typed form of `INSERT OR IGNORE`, and the canonical SQL `ON CONFLICT DO NOTHING` — chain `.DoNothing()`. It is portable: a no-op `ON DUPLICATE KEY UPDATE` on MySQL, a `MERGE` with no matched arm on SQL Server.
+
+```go
+err := repo.Upsert(ctx, &seen, query.OnConflict("url").DoNothing()) // first writer wins; dups skipped
+```
+
 ## Multi-row UPDATE and DELETE
 
 The `Repo` writes one row by primary key; `query.Update[T]` and `query.Delete[T]` are the builders for writing *many* rows by condition. `Set`/`SetExpr` assign columns, `Where`/`Filter` scope the statement, and `Exec` returns the number of rows affected. A WHERE-less write is **refused** (add `Where("1 = 1")` to affect every row on purpose).
@@ -445,6 +473,15 @@ restocked, err := query.Update[Product](db).
 	SetExpr("stock", "stock + ?", 100). // a raw expression, not just a value
 	Filter(query.Col[string]("category").Eq("electronics")).
 	Returning(ctx) // []Product, the updated rows
+```
+
+For the common atomic read-modify-write, `Inc`/`Dec` are typed sugar over `SetExpr` — the increment happens in the database, with the column quoted for the dialect:
+
+```go
+_, err := query.Update[Product](db).
+	Inc("view_count", 1). // view_count = view_count + 1, atomically
+	Filter(query.Col[int64]("id").Eq(id)).
+	Exec(ctx)
 ```
 
 `From(source)` adds a correlated `UPDATE … FROM` — set columns from another table (or a `VALUES` list), which is also how you set many rows to *different* values in one statement. Gated by `FeatUpdateFrom` (Postgres / SQLite / SQL Server; MySQL, which uses `UPDATE … JOIN`, raises a clear build error):

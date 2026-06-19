@@ -47,7 +47,7 @@ func (sqliteDialect) Name() string { return "sqlite" }
 func (sqliteDialect) Features() dialect.Feature {
 	return dialect.FeatReturning | dialect.FeatInsertOnConflict | dialect.FeatCTE |
 		dialect.FeatJSON | dialect.FeatLastInsertID | dialect.FeatIntersectExcept |
-		dialect.FeatUpdateFrom
+		dialect.FeatUpdateFrom | dialect.FeatMatch
 }
 func (sqliteDialect) AppendPlaceholder(b []byte, _ int) []byte { return append(b, '?') }
 func (sqliteDialect) QuoteIdent(b []byte, ident string) []byte { return quoteWith(b, '"', '"', ident) }
