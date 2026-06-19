@@ -82,6 +82,8 @@ By default the bind argument *values* are logged — that is what makes a statem
 db, _ := sqlite.Open("app.db", liteorm.WithLogger(devlog.New(os.Stderr, nil)), liteorm.WithSQLArgs(false))
 ```
 
+Large bind values are bounded automatically: a `[]byte` or `string` argument over 256 bytes is logged as a `<N bytes>` summary or a truncated preview, so a statement that binds a multi-megabyte blob or text never dumps the whole payload into the log. Streamed large-object content never appears at all — an `orm.LOB` field binds an id, not the bytes.
+
 ## What gets logged
 
-Statements run through a `liteorm.Session` (a `*DB` or a transaction) are logged — that covers both the `query` and `orm` front-ends and raw `ExecContext`/`QueryContext`/`query.Raw`, including statements inside a transaction. Runnable demonstration: [`examples/logging`](../../examples/logging).
+Statements run through a `liteorm.Session` (a `*DB` or a transaction) are logged — that covers both the `query` and `orm` front-ends and raw `ExecContext`/`QueryContext`/`query.Raw`, including statements inside a transaction. A connection pinned with `sqlite.Pin` (for SESSION/changeset capture) inherits the database's logger and `WithSQLArgs` setting, so its statements log identically. Runnable demonstration: [`examples/logging`](../../examples/logging).

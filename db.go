@@ -50,6 +50,11 @@ func (db *DB) Dialect() dialect.Dialect { return db.d }
 // Logger returns the configured logger.
 func (db *DB) Logger() *slog.Logger { return db.log }
 
+// LogArgs reports whether bind-argument values are included in statement logs
+// (the WithSQLArgs setting). A backend that binds a DB to a specific connection
+// propagates it alongside Logger, so the bound handle logs identically.
+func (db *DB) LogArgs() bool { return db.logArgs }
+
 // Querier exposes the underlying backend Querier (for capability type-asserts).
 func (db *DB) Querier() Querier { return db.q }
 

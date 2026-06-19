@@ -45,6 +45,8 @@ Events: message `liteorm.query` / `liteorm.exec`; attributes `sql`, `args`, `dur
 | Toggle by env | `if os.Getenv("APP_DEBUG") != "" { lg = devlog.New(os.Stderr, nil) }` |
 | Hide arg values (secrets) | add `liteorm.WithSQLArgs(false)` (logs arg count only) |
 
+Large bind values are bounded automatically: a `[]byte`/`string` arg over 256 bytes logs as a `<N bytes>` summary or truncated preview, so a multi-megabyte blob/text is never dumped. `orm.LOB` content never appears (it binds an id, not bytes). A `sqlite.Pin`-ned connection inherits the DB's logger and `WithSQLArgs` setting.
+
 ## Pitfalls
 
 - **Nothing appears?** The logger must be enabled for `slog.LevelDebug`. A standard `slog.NewJSONHandler(w, nil)` defaults to info — set `&slog.HandlerOptions{Level: slog.LevelDebug}`. `devlog.New` is debug by default.

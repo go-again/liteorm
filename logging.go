@@ -2,12 +2,14 @@ package liteorm
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Statement logging. liteorm logs every executed SQL statement through the
@@ -40,7 +42,7 @@ func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []an
 	attrs := make([]slog.Attr, 0, 6)
 	attrs = append(attrs, slog.String(AttrSQL, query), slog.Duration(AttrDur, time.Since(start)))
 	if logArgs {
-		attrs = append(attrs, slog.Any(AttrArgs, args))
+		attrs = append(attrs, slog.Any(AttrArgs, capArgs(args)))
 	} else {
 		attrs = append(attrs, slog.Int(AttrArgs, len(args)))
 	}
@@ -54,6 +56,55 @@ func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []an
 		attrs = append(attrs, slog.Any(AttrError, err))
 	}
 	log.LogAttrs(ctx, slog.LevelDebug, msg, attrs...)
+}
+
+// maxLoggedArg bounds how much of a single bind argument is rendered in a
+// statement log. A []byte longer than this is replaced with a "<N bytes>"
+// summary and a string longer than this is truncated with a "…(N bytes)" marker,
+// so logging a statement that binds a multi-megabyte blob or text never dumps the
+// whole payload into the log (or renders binary as escaped text). Large-object
+// content is never affected — an orm.LOB binds an id, not bytes.
+const maxLoggedArg = 256
+
+// capArgs returns args with any oversized []byte/string bounded for logging,
+// allocating a new slice only when something was actually capped (the common case
+// — small args — is returned unchanged with no allocation).
+func capArgs(args []any) []any {
+	var out []any
+	for i, v := range args {
+		if c, capped := capArg(v); capped {
+			if out == nil {
+				out = make([]any, len(args))
+				copy(out, args)
+			}
+			out[i] = c
+		}
+	}
+	if out == nil {
+		return args
+	}
+	return out
+}
+
+// capArg bounds one bind argument for logging, returning the value unchanged when
+// it is small. Only []byte and string can be unbounded; every other type is left
+// as-is. A string is truncated on a UTF-8 rune boundary so the preview stays valid.
+func capArg(v any) (any, bool) {
+	switch a := v.(type) {
+	case string:
+		if len(a) > maxLoggedArg {
+			cut := maxLoggedArg
+			for cut > 0 && !utf8.RuneStart(a[cut]) {
+				cut--
+			}
+			return a[:cut] + fmt.Sprintf("…(%d bytes)", len(a)), true
+		}
+	case []byte:
+		if len(a) > maxLoggedArg {
+			return fmt.Sprintf("<%d bytes>", len(a)), true
+		}
+	}
+	return v, false
 }
 
 // sourceDir is the directory of liteorm's own source tree (the dir of this
