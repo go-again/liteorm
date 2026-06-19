@@ -11,6 +11,10 @@ import (
 type Conflict struct {
 	Columns []string
 	Update  []string
+	// Nothing renders ON CONFLICT ... DO NOTHING (ignore the conflicting row)
+	// instead of DO UPDATE — the typed form of INSERT OR IGNORE. On MySQL it is a
+	// no-op ON DUPLICATE KEY UPDATE; on SQL Server, a MERGE with no WHEN MATCHED arm.
+	Nothing bool
 }
 
 // Insert is an INSERT statement model with optional multi-row VALUES, upsert,
@@ -131,15 +135,17 @@ func (ins Insert) buildMerge(d dialect.Dialect) (string, []any, error) {
 		b = append(b, " = src."...)
 		b = d.QuoteIdent(b, col)
 	}
-	b = append(b, " WHEN MATCHED THEN UPDATE SET "...)
-	for i, col := range c.Update {
-		if i > 0 {
-			b = append(b, ", "...)
+	if !c.Nothing {
+		b = append(b, " WHEN MATCHED THEN UPDATE SET "...)
+		for i, col := range c.Update {
+			if i > 0 {
+				b = append(b, ", "...)
+			}
+			b = append(b, "tgt."...)
+			b = d.QuoteIdent(b, col)
+			b = append(b, " = src."...)
+			b = d.QuoteIdent(b, col)
 		}
-		b = append(b, "tgt."...)
-		b = d.QuoteIdent(b, col)
-		b = append(b, " = src."...)
-		b = d.QuoteIdent(b, col)
 	}
 	b = append(b, " WHEN NOT MATCHED THEN INSERT ("...)
 	b = appendCols(b, d, ins.Columns)
@@ -187,14 +193,21 @@ func appendUpsert(b []byte, d dialect.Dialect, c *Conflict) ([]byte, error) {
 	feat := d.Features()
 	switch {
 	case feat.Has(dialect.FeatInsertOnConflict):
-		b = append(b, " ON CONFLICT ("...)
-		for i, col := range c.Columns {
-			if i > 0 {
-				b = append(b, ", "...)
+		b = append(b, " ON CONFLICT"...)
+		if len(c.Columns) > 0 {
+			b = append(b, " ("...)
+			for i, col := range c.Columns {
+				if i > 0 {
+					b = append(b, ", "...)
+				}
+				b = d.QuoteIdent(b, col)
 			}
-			b = d.QuoteIdent(b, col)
+			b = append(b, ')')
 		}
-		b = append(b, ") DO UPDATE SET "...)
+		if c.Nothing {
+			return append(b, " DO NOTHING"...), nil
+		}
+		b = append(b, " DO UPDATE SET "...)
 		for i, col := range c.Update {
 			if i > 0 {
 				b = append(b, ", "...)
@@ -206,6 +219,16 @@ func appendUpsert(b []byte, d dialect.Dialect, c *Conflict) ([]byte, error) {
 		return b, nil
 	case feat.Has(dialect.FeatOnDuplicateKey):
 		b = append(b, " ON DUPLICATE KEY UPDATE "...)
+		if c.Nothing {
+			// MySQL has no DO NOTHING; assign a conflict column to itself as a no-op.
+			if len(c.Columns) == 0 {
+				return nil, fmt.Errorf("sqlgen: DO NOTHING upsert on %s needs a conflict column", d.Name())
+			}
+			b = d.QuoteIdent(b, c.Columns[0])
+			b = append(b, " = "...)
+			b = d.QuoteIdent(b, c.Columns[0])
+			return b, nil
+		}
 		for i, col := range c.Update {
 			if i > 0 {
 				b = append(b, ", "...)

@@ -141,3 +141,46 @@ func TestMSSQLInsertOutputAndMerge(t *testing.T) {
 		t.Errorf("merge args = %v, want 2", args)
 	}
 }
+
+// DoNothing renders ON CONFLICT DO NOTHING per dialect: a no-op self-assign on
+// MySQL (which lacks DO NOTHING) and a MERGE with no WHEN MATCHED arm on MSSQL.
+func TestUpsertDoNothing(t *testing.T) {
+	mk := func() sqlgen.Insert {
+		return sqlgen.Insert{
+			Table:      "users",
+			Columns:    []string{"name", "email"},
+			Rows:       [][]any{{"alice", "a@x.io"}},
+			OnConflict: &sqlgen.Conflict{Columns: []string{"email"}, Nothing: true},
+		}
+	}
+	cases := []struct {
+		d    dialect.Dialect
+		want string
+	}{
+		{sqlgen.SQLite, `INSERT INTO "users" ("name", "email") VALUES (?, ?) ON CONFLICT ("email") DO NOTHING`},
+		{sqlgen.Postgres, `INSERT INTO "users" ("name", "email") VALUES ($1, $2) ON CONFLICT ("email") DO NOTHING`},
+		{sqlgen.MySQL, "INSERT INTO `users` (`name`, `email`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `email` = `email`"},
+		{sqlgen.MSSQL, `MERGE INTO [users] AS tgt USING (VALUES (@p1, @p2)) AS src ([name], [email]) ON tgt.[email] = src.[email] WHEN NOT MATCHED THEN INSERT ([name], [email]) VALUES (src.[name], src.[email]);`},
+	}
+	for _, c := range cases {
+		t.Run(c.d.Name(), func(t *testing.T) {
+			got, _, err := mk().Build(c.d)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("SQL mismatch\n got: %s\nwant: %s", got, c.want)
+			}
+		})
+	}
+
+	// A bare DO NOTHING (no conflict target) is valid on SQLite/Postgres; MySQL
+	// cannot express it and must error rather than emit broken SQL.
+	bare := sqlgen.Insert{Table: "t", Columns: []string{"a"}, Rows: [][]any{{1}}, OnConflict: &sqlgen.Conflict{Nothing: true}}
+	if got, _, err := bare.Build(sqlgen.SQLite); err != nil || got != `INSERT INTO "t" ("a") VALUES (?) ON CONFLICT DO NOTHING` {
+		t.Errorf("bare sqlite: got %q err %v", got, err)
+	}
+	if _, _, err := bare.Build(sqlgen.MySQL); err == nil {
+		t.Error("bare DO NOTHING on MySQL should error (needs a conflict column)")
+	}
+}

@@ -61,7 +61,7 @@ repo := orm.NewRepo[Post](sess)
 | `Find(ctx)` | All rows in the current scope. |
 | `Update(ctx, *v)` | Non-key columns by PK; fires Before/AfterUpdate; bumps autoUpdate time. Returns `ErrNoRows` if no row matches (wrong PK, or out-of-scope soft-deleted). |
 | `Save(ctx, *v)` | Insert when the PK is zero, else Update — upsert by identity; fires the matching hooks. |
-| `Upsert(ctx, *v, query.OnConflict(...).DoUpdate(...))` | INSERT … ON CONFLICT DO UPDATE in one statement; fires Before/AfterCreate; narrow DoUpdate cols to preserve e.g. created_at. |
+| `Upsert(ctx, *v, query.OnConflict(...).DoUpdate(...))` | INSERT … ON CONFLICT DO UPDATE in one statement; fires Before/AfterCreate; narrow DoUpdate cols to preserve e.g. created_at. `.DoNothing()` ignores the conflict (portable INSERT OR IGNORE). |
 | `FirstOrCreate(ctx, *v, conds...)` | Load the first row matching `conds`, or Create `v` if none; returns `created bool`. |
 | `FirstOrInit(ctx, *v, conds...)` | Load the first row matching `conds`, or leave `*v` as its defaults and write nothing; returns `found bool` (non-persisting sibling of FirstOrCreate). |
 | `FindInBatches(ctx, n, fn)` | Process matching rows in keyset chunks of `n` (calls `fn(batch []T)`); honors scopes + soft-delete; single-PK only; stops on short batch or `fn` error. |

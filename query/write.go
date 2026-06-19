@@ -40,6 +40,19 @@ func (u *UpdateBuilder[T]) SetExpr(col, sqlExpr string, args ...any) *UpdateBuil
 	return u
 }
 
+// Inc atomically increments col by `by` in the UPDATE (col = col + by) — the typed
+// form of SetExpr("col", "col + 1"), with the column quoted for the dialect so the
+// read-modify-write happens in the database. Dec decrements. The column is still
+// validated against T at build time.
+func (u *UpdateBuilder[T]) Inc(col string, by int64) *UpdateBuilder[T] {
+	return u.SetExpr(col, quoteCol(u.sess.Dialect(), col)+" + ?", by)
+}
+
+// Dec atomically decrements col by `by` (col = col - by).
+func (u *UpdateBuilder[T]) Dec(col string, by int64) *UpdateBuilder[T] {
+	return u.SetExpr(col, quoteCol(u.sess.Dialect(), col)+" - ?", by)
+}
+
 // Where adds a raw AND-joined predicate fragment ("?" markers bound by args).
 func (u *UpdateBuilder[T]) Where(frag string, args ...any) *UpdateBuilder[T] {
 	u.up.Where = append(u.up.Where, sqlgen.Expr{SQL: frag, Args: args})
