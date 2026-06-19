@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6
-	liteorm.org v0.8.0
+	liteorm.org v0.9.0
 )
 
 require (
