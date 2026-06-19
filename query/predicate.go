@@ -30,6 +30,11 @@ type Predicate struct {
 type Column[V any] struct {
 	name string
 	tbl  string // optional table/alias qualifier (for correlated refs); "" = unqualified
+	// unvalidated skips the model-schema column validation (see Unvalidated). The
+	// column is still typed and dialect-quoted; only the "is this a declared
+	// column?" check is waived, so its predicates/fields/order terms emit no
+	// cols for validation.
+	unvalidated bool
 }
 
 // Col names a typed column, e.g. Col[string]("email").Eq("a@b.c").
@@ -38,6 +43,28 @@ func Col[V any](name string) Column[V] { return Column[V]{name: name} }
 // Of qualifies the column with a table name or alias, so it renders
 // "table"."col" — for correlating a subquery to its outer query (see EqCol).
 func (c Column[V]) Of(table string) Column[V] { c.tbl = table; return c }
+
+// Unvalidated waives the model-schema validation that normally rejects a column
+// not declared on the model (a typo guard). Use it for columns that exist on the
+// underlying table but aren't fields on the model: a virtual table's HIDDEN
+// constraint columns (e.g. spellfix1's "scope", which drives xFilter), or the
+// implicit "rowid"/"oid". The column is still typed and dialect-quoted — only the
+// "is this a declared column?" check is skipped:
+//
+//	Filter(query.Col[int]("scope").Unvalidated().Le(2)) // renders "scope" <= ?
+//
+// Everything else (operators, Of, Field, Asc/Desc, Pluck) composes as usual.
+func (c Column[V]) Unvalidated() Column[V] { c.unvalidated = true; return c }
+
+// colsRef is the column list a predicate/field carries for model-schema
+// validation: the column name normally, or nil when unvalidated (skips the check,
+// the same way Expr does).
+func (c Column[V]) colsRef() []string {
+	if c.unvalidated {
+		return nil
+	}
+	return []string{c.name}
+}
 
 func quoteCol(d dialect.Dialect, name string) string {
 	return string(d.QuoteIdent(nil, name))
@@ -56,7 +83,7 @@ func (c Column[V]) cmp(op string, v V) Predicate {
 		render: func(d dialect.Dialect) (string, []any) {
 			return quoteCol(d, c.name) + " " + op + " ?", []any{v}
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 
@@ -76,7 +103,7 @@ func (c Column[V]) Like(pattern string) Predicate {
 		render: func(d dialect.Dialect) (string, []any) {
 			return quoteCol(d, c.name) + " LIKE ?", []any{pattern}
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 
@@ -93,7 +120,7 @@ func (c Column[V]) likeEsc(pattern string) Predicate {
 		render: func(d dialect.Dialect) (string, []any) {
 			return quoteCol(d, c.name) + ` LIKE ? ESCAPE '~'`, []any{pattern}
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 
@@ -115,7 +142,7 @@ func (c Column[V]) EqCol(other Column[V]) Predicate {
 		render: func(d dialect.Dialect) (string, []any) {
 			return c.ref(d) + " = " + other.ref(d), nil
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 
@@ -150,7 +177,7 @@ func (c Column[V]) inList(op string, vs []V) Predicate {
 			b.WriteByte(')')
 			return b.String(), args
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 
@@ -163,7 +190,7 @@ func (c Column[V]) nullCheck(suffix string) Predicate {
 		render: func(d dialect.Dialect) (string, []any) {
 			return quoteCol(d, c.name) + suffix, nil
 		},
-		cols: []string{c.name},
+		cols: c.colsRef(),
 	}
 }
 

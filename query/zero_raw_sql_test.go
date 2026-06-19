@@ -87,6 +87,40 @@ func TestExistsFieldRender(t *testing.T) {
 	}
 }
 
+func TestUnvalidatedColumn(t *testing.T) {
+	lite := mockSession{d: sqlgen.SQLite}
+
+	// "scope" is not a column on tuser; without Unvalidated the validator rejects
+	// it, with Unvalidated it renders quoted and survives validation.
+	if _, _, err := Select[tuser](lite).Filter(Col[int]("scope").Le(2)).buildSQL(); err == nil {
+		t.Error("a validated predicate on an unknown column should be rejected")
+	}
+	q, args, err := Select[tuser](lite).Filter(Col[int]("scope").Unvalidated().Le(2)).buildSQL()
+	if err != nil {
+		t.Fatalf("unvalidated predicate rejected: %v", err)
+	}
+	if !strings.HasSuffix(q, `WHERE "scope" <= ?`) {
+		t.Errorf("unvalidated render: %s", q)
+	}
+	if len(args) != 1 || args[0] != 2 {
+		t.Errorf("args = %v, want [2]", args)
+	}
+
+	// Nested inside And, alongside a validated predicate, it still passes.
+	if _, _, err := Select[tuser](lite).
+		Filter(And(Col[int64]("id").Gt(0), Col[int]("scope").Unvalidated().Eq(1))).buildSQL(); err != nil {
+		t.Errorf("unvalidated predicate nested in And rejected: %v", err)
+	}
+
+	// Unvalidated column as an ORDER BY term is not validated either.
+	if _, _, err := Select[tuser](lite).Order(Asc(Col[int64]("rowid").Unvalidated())).buildSQL(); err != nil {
+		t.Errorf("unvalidated order term rejected: %v", err)
+	}
+	if _, _, err := Select[tuser](lite).Order(Asc(Col[int64]("rowid"))).buildSQL(); err == nil {
+		t.Error("a validated order term on an unknown column should be rejected")
+	}
+}
+
 func TestUpdateIncDecRender(t *testing.T) {
 	lite := mockSession{d: sqlgen.SQLite}
 	up, err := Update[tuser](lite).Inc("age", 1).Where("id = ?", 1).resolved()

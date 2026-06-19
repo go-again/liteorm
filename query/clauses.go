@@ -14,17 +14,22 @@ import (
 // Asc/Desc (the column is quoted by the dialect), or a raw fragment with
 // OrderExpr (the escape hatch). Pass terms to SelectBuilder.Order.
 type OrderTerm struct {
-	col string // column to quote; empty when raw is set
-	dir string // "ASC" / "DESC" / ""
-	raw string // a raw ORDER BY fragment, emitted verbatim
+	col         string // column to quote; empty when raw is set
+	dir         string // "ASC" / "DESC" / ""
+	raw         string // a raw ORDER BY fragment, emitted verbatim
+	unvalidated bool   // skip model-schema validation of col (an Unvalidated column)
 }
 
 // Asc orders by a typed column ascending; the column is validated against the
-// model and quoted by the dialect.
-func Asc[V any](c Column[V]) OrderTerm { return OrderTerm{col: c.name, dir: "ASC"} }
+// model (unless it is Unvalidated) and quoted by the dialect.
+func Asc[V any](c Column[V]) OrderTerm {
+	return OrderTerm{col: c.name, dir: "ASC", unvalidated: c.unvalidated}
+}
 
 // Desc orders by a typed column descending.
-func Desc[V any](c Column[V]) OrderTerm { return OrderTerm{col: c.name, dir: "DESC"} }
+func Desc[V any](c Column[V]) OrderTerm {
+	return OrderTerm{col: c.name, dir: "DESC", unvalidated: c.unvalidated}
+}
 
 // OrderExpr is the raw escape hatch for an ORDER BY term the typed helpers can't
 // express (a function, a collation, NULLS FIRST). It is emitted verbatim.
@@ -65,9 +70,10 @@ func plainField(cols []string, render func(d dialect.Dialect) string) Field {
 	return Field{cols: cols, render: func(d dialect.Dialect) (string, []any) { return render(d), nil }}
 }
 
-// Field erases a typed column for a clause position; it is quoted by the dialect.
+// Field erases a typed column for a clause position; it is quoted by the dialect
+// (and validated against the model unless the column is Unvalidated).
 func (c Column[V]) Field() Field {
-	return plainField([]string{c.name}, func(d dialect.Dialect) string { return quoteCol(d, c.name) })
+	return plainField(c.colsRef(), func(d dialect.Dialect) string { return quoteCol(d, c.name) })
 }
 
 // Name references a column by name (quoted by the dialect, validated against the
@@ -150,7 +156,7 @@ func (b *SelectBuilder[T]) renderClauses(sel *sqlgen.Select, cols map[string]boo
 		sel.GroupBy = append(sel.GroupBy, s)
 	}
 	for _, t := range b.orderTerms {
-		if t.raw == "" {
+		if t.raw == "" && !t.unvalidated {
 			if err := unknownCol[T](cols, t.col); err != nil {
 				return err
 			}

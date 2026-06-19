@@ -77,10 +77,12 @@ Query builders (re-exported, no gosqlite import): `Term`, `Phrase`, `Prefix`, `A
 
 ```go
 hit, _ := orm.NewRepo[Vocab](db).
-    Filter(query.Match("word", term), query.Col[int]("scope").Le(2)).
+    Filter(query.Match("word", term), query.Col[int]("scope").Unvalidated().Le(2)).
     OrderBy("distance ASC").
     First(ctx)
 ```
+
+`scope` is a vtab HIDDEN column (it constrains the search but isn't on the model), so the predicate column is marked `.Unvalidated()` — typed and quoted, but exempt from the model-schema validation that would otherwise reject it. The same applies to FTS5 / sqlite-vec hidden constraint columns.
 
 ## Fuzzy correction (spellfix1)
 
@@ -103,12 +105,26 @@ frag, args := sqlite.WhereRegex("title", `^Intro to .* with Go$`)
 rows, _ := query.Select[Doc](db).Where(frag, args...).All(ctx)
 ```
 
+## Implicit columns (rowid)
+
+`sqlite.RowidCol()` is the implicit `rowid` as a typed `query.Column[int64]` (an `.Unvalidated()` column), and `sqlite.Rowid()` is the same as a projection `query.Field` — so a query can filter/order/pluck/project the row key without a raw `query.Expr("rowid")`:
+
+```go
+rows, _ := query.Into[Item, reindexRow](ctx,
+    query.Select[Item](db).Order(query.Asc(sqlite.RowidCol())),
+    sqlite.Rowid(), query.Name("title"))           // typed projection, no raw fragment
+ids, _ := query.Pluck[Item, int64](ctx, query.Select[Item](db), sqlite.RowidCol())
+```
+
+On an INTEGER PRIMARY KEY table `rowid` is an alias of the PK column, so a Rowid projection reports the PK's name; it's most useful on string-keyed models where `rowid` is a distinct implicit column.
+
 ## Pitfalls
 
 - Declarative trigger-mode keeps the index current on all writes; **hook-mode** indexes only sync through the orm Repo — a raw `query` insert won't be indexed.
 - `Score` is larger-is-better for `.Hybrid` (RRF) but smaller-is-nearer for `.Vector`/`SearchScored` (distance). Don't compare across them.
 - Full-text requires an `int64` primary key (FTS5 is keyed by the integer rowid; a string-PK model errors at migrate). Vector search supports both `int64` and string PKs.
 - A helper on a non-`dialect/sqlite` session returns `ErrUnsupportedBackend`.
+- **Virtual tables don't honor `ON CONFLICT`.** A vtab's `xUpdate` callback sees an INSERT but not the statement's `ON CONFLICT … DO NOTHING` clause (spellfix1, FTS5, sqlite-vec all ignore it), so an `Upsert(..., OnConflict(...).DoNothing())` against a vtab won't dedup. For idempotent inserts use `Create` and swallow the duplicate — `if err := repo.Create(ctx, &v); err != nil && !errors.Is(err, liteorm.ErrUniqueViolation) { return err }` — or, for a spellfix1 vocabulary, `search.NewSpellfix(...).Add(ctx, words...)`, which inserts with `INSERT OR IGNORE` (a set; duplicates dropped) internally.
 
 ## Deeper
 

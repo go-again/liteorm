@@ -58,6 +58,12 @@ query.Match("body", "rocket")                       // SQLite MATCH (FTS5/spellf
 
 `HasPrefix`/`HasSuffix`/`Contains` escape `%`/`_` so user input matches literally (the safe substring search). `query.Match` is SQLite-only and feature-gated.
 
+A predicate's column is validated against the model's schema — an undeclared name is a build-time error (catches typos). For a column that exists on the underlying table but isn't a model field — a virtual table's HIDDEN constraint columns (spellfix1's `scope`, FTS5/vec hidden cols) or the implicit `rowid`/`oid` — chain `.Unvalidated()` to waive that check; the column stays typed and dialect-quoted, only the "is it declared?" guard is skipped. It composes everywhere a `Column[V]` is accepted (`Filter`, `Asc`/`Desc`, `Pluck`, `Field`):
+
+```go
+query.Col[int]("scope").Unvalidated().Le(2)   // vtab HIDDEN column — renders "scope" <= ?
+```
+
 Combine with `query.And(...)`, `query.Or(...)`, `query.Not(p)`:
 
 ```go

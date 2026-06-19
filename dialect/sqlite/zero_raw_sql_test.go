@@ -139,6 +139,65 @@ func TestExistsField_CorrelatedProjection(t *testing.T) {
 	}
 }
 
+// ritem has a non-integer PK, so "rowid" is a genuinely separate implicit column
+// (on an INTEGER PRIMARY KEY table SQLite makes rowid an alias of the PK column,
+// and SELECT "rowid" reports the PK's name instead) — matching the real use case
+// for sqlite.Rowid()/RowidCol().
+type ritem struct {
+	ID    string `orm:"id,pk"`
+	Title string
+}
+
+func (ritem) TableName() string { return "ritems" }
+
+func TestRowid_TypedProjectionAndOrder(t *testing.T) {
+	ctx := context.Background()
+	db := openDB(t)
+	if err := orm.AutoMigrate[ritem](ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	repo := orm.NewRepo[ritem](db)
+	for _, r := range []ritem{{"a", "alpha"}, {"b", "bravo"}, {"c", "charlie"}} {
+		if err := repo.Create(ctx, &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// RowidCol drives a typed ORDER BY and a typed Pluck — no raw "rowid" string.
+	ids, err := query.Pluck[ritem, int64](ctx,
+		query.Select[ritem](db).Order(query.Asc(sqlite.RowidCol())), sqlite.RowidCol())
+	if err != nil {
+		t.Fatalf("pluck rowid: %v", err)
+	}
+	if len(ids) != 3 || ids[0] != 1 || ids[2] != 3 {
+		t.Errorf("rowids = %v, want [1 2 3]", ids)
+	}
+
+	// Rowid() projects the implicit column alongside a model column in Into.
+	type reindexRow struct {
+		Rowid int64
+		Title string
+	}
+	rows, err := query.Into[ritem, reindexRow](ctx,
+		query.Select[ritem](db).Order(query.Asc(sqlite.RowidCol())),
+		sqlite.Rowid(), query.Name("title"))
+	if err != nil {
+		t.Fatalf("into rowid: %v", err)
+	}
+	if len(rows) != 3 || rows[0].Rowid != 1 || rows[0].Title != "alpha" || rows[2].Title != "charlie" {
+		t.Errorf("rows = %+v, want rowid-ordered alpha/bravo/charlie", rows)
+	}
+
+	// RowidCol also composes as a typed predicate.
+	got, err := query.Select[ritem](db).Filter(sqlite.RowidCol().Eq(2)).First(ctx)
+	if err != nil {
+		t.Fatalf("filter rowid: %v", err)
+	}
+	if got.Title != "bravo" {
+		t.Errorf("rowid 2 = %q, want bravo", got.Title)
+	}
+}
+
 type ftsDoc struct {
 	Body string
 }
