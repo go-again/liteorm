@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	gosqlite.org v0.8.0
-	liteorm.org v0.10.0
+	liteorm.org v0.11.0
 )
 
 require (
