@@ -10,6 +10,7 @@ use (
 	./dialect/sqlite
 	./examples/blog
 	./examples/codegen
+	./examples/compressed
 	./examples/encryption
 	./examples/fixtures
 	./examples/gormport

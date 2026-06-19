@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	gosqlite "gosqlite.org"
+	"gosqlite.org/vfs/compress"
 	"gosqlite.org/vfs/crypto"
 	liteorm "liteorm.org"
 	"liteorm.org/internal/sqladapter"
@@ -71,6 +72,45 @@ func OpenEncryptedConfig(cfg gosqlite.Config, copts crypto.Options, opts ...lite
 	return liteorm.New(&conn{gdb: g}, sqlgen.SQLite, opts...), nil
 }
 
+// OpenCompressed opens a SQLite database stored compressed on disk at path, via
+// gosqlite.org/vfs/compress, using the default level. Use it exactly like a
+// database from Open: orm, query, and migrations all work above it.
+//
+// SNAPSHOT MODEL — read this. The compressed file is inflated into a full,
+// plaintext working copy (under the OS temp dir) for the lifetime of the handle,
+// and rewritten compressed only on Close. Two consequences follow:
+//   - Durability is per-SESSION, not per-transaction. A crash while the database
+//     is open reverts the on-disk file to its previous Close — no corruption, but
+//     in-session changes are lost. This is unlike every other Open here.
+//   - The working copy is plaintext, so this is NOT a substitute for at-rest
+//     encryption (OpenEncrypted), and the two cannot be composed live.
+//
+// It fits archival, distribution, shipping an embedded database, and
+// open-modify-close tooling over compressible data — not a database that must
+// stay open continuously or survive a crash mid-session. Keep one open handle per
+// compressed file. For an offline transform without a session, call
+// gosqlite.org/vfs/compress's Pack / Unpack directly.
+func OpenCompressed(path string, opts ...liteorm.Option) (*liteorm.DB, error) {
+	return OpenCompressedConfig(gosqlite.Config{
+		Path:    path,
+		Pragmas: gosqlite.RecommendedPragmas(),
+	}, compress.Options{}, opts...)
+}
+
+// OpenCompressedConfig opens a compressed-at-rest SQLite database from a full
+// gosqlite.Config plus compress.Options, for callers that need a non-default
+// level (compress.CompressionBest, …), a working-copy TempDir, or custom
+// pragmas/pool sizing. cfg.VFS must be empty and cfg.Path must be on disk
+// (in-memory is rejected). See OpenCompressed for the snapshot-model semantics:
+// durability is per-session and the working copy is plaintext.
+func OpenCompressedConfig(cfg gosqlite.Config, copts compress.Options, opts ...liteorm.Option) (*liteorm.DB, error) {
+	g, err := compress.Open(cfg, copts)
+	if err != nil {
+		return nil, err
+	}
+	return liteorm.New(&conn{gdb: g}, sqlgen.SQLite, opts...), nil
+}
+
 // Conn returns the underlying *gosqlite.DB for a liteorm.Session opened by this
 // package, giving the SQLite-specific subpackages (search, changeset) access to
 // gosqlite's typed surface (vec, FTS5, sessions) and the blobstore engine.
@@ -96,7 +136,11 @@ func Conn(sess liteorm.Session) (*gosqlite.DB, bool) {
 // done to return the connection to the pool; until then the *Conn stays valid.
 // sess must be a *liteorm.DB opened by this package (not a transaction).
 func Pin(ctx context.Context, sess liteorm.Session) (bound *liteorm.DB, gc *gosqlite.Conn, release func() error, err error) {
-	g, ok := Conn(sess)
+	parent, ok := sess.(*liteorm.DB)
+	if !ok {
+		return nil, nil, nil, errors.New("liteorm/sqlite: Pin requires a *liteorm.DB opened by dialect/sqlite")
+	}
+	g, ok := Conn(parent)
 	if !ok {
 		return nil, nil, nil, errors.New("liteorm/sqlite: Pin requires a *liteorm.DB opened by dialect/sqlite")
 	}
@@ -115,7 +159,11 @@ func Pin(ctx context.Context, sess liteorm.Session) (bound *liteorm.DB, gc *gosq
 		_ = sc.Close()
 		return nil, nil, nil, err
 	}
-	return liteorm.New(&pinnedConn{sc: sc}, sqlgen.SQLite), gc, sc.Close, nil
+	// Inherit the source DB's logging configuration so statements on the pinned
+	// connection (e.g. SESSION/changeset capture) log through the same logger,
+	// honoring WithLogger and WithSQLArgs rather than falling back to defaults.
+	return liteorm.New(&pinnedConn{sc: sc}, sqlgen.SQLite,
+		liteorm.WithLogger(parent.Logger()), liteorm.WithSQLArgs(parent.LogArgs())), gc, sc.Close, nil
 }
 
 // conn adapts a *gosqlite.DB (which embeds *sql.DB) to liteorm.Querier +

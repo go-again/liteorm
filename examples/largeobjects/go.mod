@@ -15,11 +15,11 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	gosqlite.org v0.9.0 // indirect
-	gosqlite.org/blobstore v0.9.0 // indirect
-	gosqlite.org/vfs/crypto v0.9.0 // indirect
+	gosqlite.org v0.10.0 // indirect
+	gosqlite.org/blobstore v0.10.0 // indirect
+	gosqlite.org/vfs/compress v0.10.0 // indirect
+	gosqlite.org/vfs/crypto v0.10.0 // indirect
 	lukechampine.com/adiantum v1.1.1 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

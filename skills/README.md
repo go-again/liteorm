@@ -18,6 +18,7 @@ Each `SKILL.md` begins with YAML frontmatter (`name` + a one-sentence `descripti
 | [sqlite-search](sqlite-search/SKILL.md) | SQLite vector (sqlite-vec), full-text (FTS5), and hybrid RRF search. |
 | [large-objects](large-objects/SKILL.md) | Storing large/growing binary content (files, uploads, blobs) in SQLite as streamed `io.ReaderAt`/`io.WriterAt` via an `orm.LOB` field. |
 | [encryption](encryption/SKILL.md) | Opening a SQLite database with at-rest (transparent page-level) encryption: keys, reopening, constraints. |
+| [compressed-database](compressed-database/SKILL.md) | Storing a whole SQLite database compressed on disk (archival, distribution, embedded `.db`): `OpenCompressed` and the snapshot-model trade-offs. |
 | [postgres-advanced](postgres-advanced/SKILL.md) | Postgres LISTEN/NOTIFY, and JSONB / array typed operators. |
 | [porting-from-gorm](porting-from-gorm/SKILL.md) | Migrating a gorm codebase: native gorm-tag reading and rewriting to native `orm` tags; what differs. |
 | [logging](logging/SKILL.md) | Seeing/tracing executed SQL while developing: debug logging via slog or the colored handler, traced to your code. |

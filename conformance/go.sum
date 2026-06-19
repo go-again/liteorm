@@ -17,6 +17,7 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
+github.com/go-again/az v0.2.0 h1:fvspiQI8rTJwDGgdZLPyxQtoqCAe/QTY/6G0OoaDhYw=
 github.com/go-sql-driver/mysql v1.10.0 h1:Q+1LV8DkHJvSYAdR83XzuhDaTykuDx0l6fkXxoWCWfw=
 github.com/go-sql-driver/mysql v1.10.0/go.mod h1:M+cqaI7+xxXGG9swrdeUIoPG3Y3KCkF0pZej+SK+nWk=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
@@ -77,9 +78,9 @@ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8
 gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-gosqlite.org v0.9.0 h1:XfiXU3plDGLsodH5SyFmvtK8epm7kCDZcj8YiMxng0Q=
-gosqlite.org v0.9.0/go.mod h1:hs2eKURzmudcE5F+jUdRNHNnUzN2oleuit2+cqIYm7c=
-gosqlite.org/vfs/crypto v0.9.0 h1:2sCtZF/JmtQh5p1QGd0ApE86HRvnLdsn2eDzRAbW/gE=
+gosqlite.org v0.10.0 h1:R6IMxggHcdF+v746KaOAAJcNdtfAew9mJ+xFFPD3kCM=
+gosqlite.org/vfs/compress v0.10.0 h1:CGUTWz4w3QIMWBm0JgqtIPJe7EGxLWubITHJZJUvQnQ=
+gosqlite.org/vfs/crypto v0.10.0 h1:JmEsB4OJY68DxMCc/5ShgMbTNr1hPgaDzex6zsI/g2I=
 lukechampine.com/adiantum v1.1.1 h1:4fp6gTxWCqpEbLy40ExiYDDED3oUNWx5cTqBCtPdZqA=
 lukechampine.com/adiantum v1.1.1/go.mod h1:LrAYVnTYLnUtE/yMp5bQr0HstAf060YUF8nM0B6+rUw=
 modernc.org/cc/v4 v4.28.2 h1:3tQ0lf2ADtoby2EtSP+J7IE2SHwEJdP8ioR59wx7XpY=
