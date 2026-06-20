@@ -192,6 +192,123 @@ func TestLOB_Compressed(t *testing.T) {
 	}
 }
 
+type ovdoc struct {
+	ID      int64   `orm:"id,pk"`
+	Content orm.LOB // no lob tag — chunk/compression come from AutoMigrate overrides
+}
+
+func (ovdoc) TableName() string { return "ovdocs" }
+
+// TestLOB_AutoMigrateCompressionOverride proves a runtime override
+// (orm.WithLOBCompression at AutoMigrate) reaches the Writer's allocation, not
+// just provisioning: the model has no compress tag, yet the created object's codec
+// is non-raw because the store was provisioned compressed and the cached handle
+// allocates at that level.
+func TestLOB_AutoMigrateCompressionOverride(t *testing.T) {
+	ctx := context.Background()
+	db := openDB(t)
+	if err := orm.AutoMigrate[ovdoc](ctx, db, orm.WithLOBCompression("Content", orm.CompressionBest)); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	repo := orm.NewRepo[ovdoc](db)
+	d := &ovdoc{}
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog\n"), 466)[:20<<10]
+	w, err := lob.Open(ctx, db, d, "Content")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := w.WriteAt(want, 0); err != nil {
+		t.Fatalf("writeat: %v", err)
+	}
+	_ = w.Close()
+
+	got, err := repo.Get(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codec := scalarInt(t, db, fmt.Sprintf("SELECT codec FROM ovdocs_content_objects WHERE id=%d", got.Content.ID())); codec == 0 {
+		t.Fatal("object codec = 0 (raw); the AutoMigrate compression override did not reach the Writer")
+	}
+}
+
+type chdoc struct {
+	ID      int64 `orm:"id,pk"`
+	Content orm.LOB
+}
+
+func (chdoc) TableName() string { return "chdocs" }
+
+// TestLOB_AutoMigrateChunkSizeOverride proves a WithLOBChunkSize override reaches
+// the Writer's allocation: a no-tag model provisioned with chunk=8192 creates
+// objects with that chunk size, not the backend default.
+func TestLOB_AutoMigrateChunkSizeOverride(t *testing.T) {
+	ctx := context.Background()
+	db := openDB(t)
+	if err := orm.AutoMigrate[chdoc](ctx, db, orm.WithLOBChunkSize("Content", 8192)); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	repo := orm.NewRepo[chdoc](db)
+	d := &chdoc{}
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	w, err := lob.Open(ctx, db, d, "Content")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := w.WriteAt([]byte("hello"), 0); err != nil {
+		t.Fatalf("writeat: %v", err)
+	}
+	_ = w.Close()
+
+	got, err := repo.Get(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk := scalarInt(t, db, fmt.Sprintf("SELECT chunk FROM chdocs_content_objects WHERE id=%d", got.Content.ID())); chunk != 8192 {
+		t.Fatalf("object chunk = %d, want 8192 from the override (not the backend default)", chunk)
+	}
+}
+
+// TestLOB_OverrideFrozenAtFirstOpen guards the documented contract: once a store
+// is opened (here by a first AutoMigrate), a later AutoMigrate with a different
+// override is a no-op for that store — the options are frozen for the process.
+func TestLOB_OverrideFrozenAtFirstOpen(t *testing.T) {
+	ctx := context.Background()
+	db := openDB(t)
+	if err := orm.AutoMigrate[ovdoc](ctx, db); err != nil { // opens + caches the store raw
+		t.Fatal(err)
+	}
+	if err := orm.AutoMigrate[ovdoc](ctx, db, orm.WithLOBCompression("Content", orm.CompressionBest)); err != nil {
+		t.Fatal(err)
+	}
+	repo := orm.NewRepo[ovdoc](db)
+	d := &ovdoc{}
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	want := bytes.Repeat([]byte("the quick brown fox jumps over the lazy dog\n"), 466)[:20<<10]
+	w, err := lob.Open(ctx, db, d, "Content")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := w.WriteAt(want, 0); err != nil {
+		t.Fatalf("writeat: %v", err)
+	}
+	_ = w.Close()
+
+	got, err := repo.Get(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codec := scalarInt(t, db, fmt.Sprintf("SELECT codec FROM ovdocs_content_objects WHERE id=%d", got.Content.ID())); codec != 0 {
+		t.Fatalf("codec = %d, want 0 — a second AutoMigrate override must be a no-op for an already-opened store", codec)
+	}
+}
+
 func TestLOB_ReadUnallocated(t *testing.T) {
 	ctx := context.Background()
 	db := openDB(t)

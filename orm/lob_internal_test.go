@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	liteorm "liteorm.org"
 )
 
 type lobModel struct {
@@ -107,8 +109,78 @@ func TestProvisionLOBsWithoutProvisioner(t *testing.T) {
 		t.Skip("a LOB provisioner is registered in this binary")
 	}
 	s, _ := SchemaOf[lobModel]()
-	err := provisionLOBs(context.Background(), nil, s)
+	err := provisionLOBs(context.Background(), nil, s, migrateConfig{})
 	if err == nil || !strings.Contains(err.Error(), "dialect/sqlite/lob") {
 		t.Fatalf("want a missing-provisioner error naming the import, got %v", err)
+	}
+}
+
+// TestProvisionLOBsOverride proves a WithLOB* override wins over the tag and
+// merges per knob: WithLOBCompression overrides compression while the tag's chunk
+// size is kept untouched.
+func TestProvisionLOBsOverride(t *testing.T) {
+	var got LOBProvisionOptions
+	var gotStore string
+	prev := lobProvisioner
+	lobProvisioner = func(_ context.Context, _ liteorm.Session, store string, opts LOBProvisionOptions) error {
+		gotStore, got = store, opts
+		return nil
+	}
+	defer func() { lobProvisioner = prev }()
+
+	s, _ := SchemaOf[lobModel]() // Blob: lob:"chunk=1m", no compression
+	cfg := buildMigrateConfig([]MigrateOption{WithLOBCompression("Blob", CompressionBest)})
+	if err := provisionLOBs(context.Background(), nil, s, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got.ChunkSize != 1<<20 {
+		t.Errorf("ChunkSize = %d, want 1m kept from the tag (compression override must not touch it)", got.ChunkSize)
+	}
+	if got.Compression != CompressionBest {
+		t.Errorf("Compression = %d, want CompressionBest from the override", got.Compression)
+	}
+	if gotStore != "lobmodels_blob" {
+		t.Errorf("store = %q, want lobmodels_blob", gotStore)
+	}
+}
+
+// TestWithLOBOptionValidation confirms a bad override value (the kind a CLI flag
+// could supply) errors at AutoMigrate rather than silently degrading to a default
+// — surfaced before any DDL, so sess is never touched.
+func TestWithLOBOptionValidation(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		opt  MigrateOption
+		want string
+	}{
+		{"zero chunk", WithLOBChunkSize("Blob", 0), "must be positive"},
+		{"negative chunk", WithLOBChunkSize("Blob", -1), "must be positive"},
+		{"out-of-range compression", WithLOBCompression("Blob", Compression(99)), "unknown compression"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := AutoMigrate[lobModel](ctx, nil, tc.opt)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("AutoMigrate err = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+	// CompressionNone is a valid override (turn a tag's compression off).
+	if err := buildMigrateConfig([]MigrateOption{WithLOBCompression("Blob", CompressionNone)}).optErr; err != nil {
+		t.Errorf("WithLOBCompression(CompressionNone) should be valid, got %v", err)
+	}
+}
+
+// TestProvisionLOBsUnknownOverrideField confirms a WithLOB* override naming a
+// field that is not an orm.LOB field fails loudly (a typo doesn't silently no-op).
+func TestProvisionLOBsUnknownOverrideField(t *testing.T) {
+	prev := lobProvisioner
+	lobProvisioner = func(context.Context, liteorm.Session, string, LOBProvisionOptions) error { return nil }
+	defer func() { lobProvisioner = prev }()
+
+	s, _ := SchemaOf[lobModel]()
+	cfg := buildMigrateConfig([]MigrateOption{WithLOBChunkSize("Nonexistent", 4096)})
+	if err := provisionLOBs(context.Background(), nil, s, cfg); err == nil || !strings.Contains(err.Error(), "Nonexistent") {
+		t.Fatalf("want an unknown-field error naming the bad field, got %v", err)
 	}
 }

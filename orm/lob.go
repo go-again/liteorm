@@ -95,7 +95,16 @@ func LOBStoreName(table, column string) string { return table + "_" + column }
 // provisionLOBs creates the backing object store for each declared LOB field,
 // idempotently, via the registered provisioner. A model with a LOB field but no
 // provisioner registered is a loud error (the dialect/sqlite/lob import is missing).
-func provisionLOBs(ctx context.Context, sess liteorm.Session, s *Schema) error {
+func provisionLOBs(ctx context.Context, sess liteorm.Session, s *Schema, cfg migrateConfig) error {
+	// Reject a WithLOB* override naming a non-LOB field (a typo) up front, before
+	// any store is provisioned — fail-fast rather than after DDL side effects.
+	known := make(map[string]bool, len(s.LOBFields))
+	for _, lf := range s.LOBFields {
+		known[lf.GoName] = true
+	}
+	if err := unknownLOBOverride(cfg, known, s.Table); err != nil {
+		return err
+	}
 	if len(s.LOBFields) == 0 {
 		return nil
 	}
@@ -103,9 +112,25 @@ func provisionLOBs(ctx context.Context, sess liteorm.Session, s *Schema) error {
 		return fmt.Errorf("orm: model %q has a LOB field but no large-object provisioner is registered — import liteorm.org/dialect/sqlite/lob", s.Table)
 	}
 	for _, lf := range s.LOBFields {
+		// Tag is the default; AutoMigrate's WithLOB* options override per field.
 		opts := LOBProvisionOptions{ChunkSize: lf.ChunkSize, Compression: lf.Compression}
+		for _, mut := range cfg.lobOverrides[lf.GoName] {
+			mut(&opts)
+		}
 		if err := lobProvisioner(ctx, sess, LOBStoreName(s.Table, lf.Column), opts); err != nil {
 			return fmt.Errorf("orm: provision LOB %q.%q: %w", s.Table, lf.Column, err)
+		}
+	}
+	return nil
+}
+
+// unknownLOBOverride reports the first WithLOB* override that names a field which
+// is not an orm.LOB field on the model, so a misspelled field name fails loudly
+// instead of silently doing nothing.
+func unknownLOBOverride(cfg migrateConfig, known map[string]bool, table string) error {
+	for field := range cfg.lobOverrides {
+		if !known[field] {
+			return fmt.Errorf("orm: WithLOB* override names %q, which is not an orm.LOB field on %q", field, table)
 		}
 	}
 	return nil

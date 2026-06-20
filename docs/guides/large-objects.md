@@ -32,6 +32,19 @@ Add `compress=<level>` to the `lob` tag to store content compressed at rest — 
 
 Compression trades CPU and memory for storage, and it changes the I/O profile: a compressed object cannot use in-place incremental BLOB I/O, so a read decompresses a whole chunk and a partial write read-modify-writes one (a write that covers a full chunk skips the read). That makes it a good fit for write-once or sequentially-streamed compressible content — files, logs, JSON — and a poor one for already-compressed payloads or hot random partial updates. Prefer a larger chunk size when compressing, and note that compression composes with [at-rest encryption](encryption.md): content is compressed first, then the pages are encrypted.
 
+## Per-database overrides (operator flags)
+
+The tag is a compile-time default. To let an operator choose chunk size and compression *per database* — wired to a CLI flag, say — override them on `AutoMigrate`, by Go field name:
+
+```go
+orm.AutoMigrate[File](ctx, db,
+	orm.WithLOBChunkSize("Content", chunk),
+	orm.WithLOBCompression("Content", comp),
+)
+```
+
+Each option overrides only its own knob (the tag still supplies the other); an override naming a field that is not an `orm.LOB` field, a non-positive chunk size, or an unknown compression level fails `AutoMigrate` loudly. Because chunk size and compression are frozen per object at creation, an override is a **default for newly created objects, not a persisted property of the database**: pass the flag consistently across launches (older objects keep the level they were written with, and reads are mode-agnostic), and run `AutoMigrate` before the first `lob.Open` so the store is provisioned with the chosen options before anything allocates. The resolved options are fixed at the store's **first open per database for the process lifetime** — a later `AutoMigrate` with different options is a no-op for a store already opened — so settle the flags once at startup. For read-only introspection — to log the resolved settings at startup — read `orm.SchemaOf[File]().LOBFields` (do not mutate it).
+
 ## Stream content
 
 ```go

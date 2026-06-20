@@ -16,7 +16,19 @@ import (
 // preserves the historical behavior (no foreign-key constraints).
 type MigrateOption func(*migrateConfig)
 
-type migrateConfig struct{ foreignKeys bool }
+type migrateConfig struct {
+	foreignKeys bool
+	// lobOverrides holds per-field mutators (keyed by Go field name) applied over a
+	// LOB field's tag-derived options at provision time, so an operator can pick
+	// chunk size / compression per database (e.g. from a CLI flag) while the tag
+	// stays the default. Each WithLOB* option appends one mutator; unset knobs keep
+	// the tag value (merge, not replace).
+	lobOverrides map[string][]func(*LOBProvisionOptions)
+	// optErr is the first invalid-option error (e.g. a non-positive chunk size).
+	// Options can't return errors, so they record it here and AutoMigrate surfaces
+	// it before doing any work.
+	optErr error
+}
 
 // WithForeignKeys makes AutoMigrate emit a FOREIGN KEY constraint for every
 // belongs-to relation on a NEWLY created table (referencing the target's primary
@@ -27,6 +39,52 @@ type migrateConfig struct{ foreignKeys bool }
 // `orm:"constraint:fk"` tag. Migrate referenced tables first, so the target exists
 // when the owner's constraint is created.
 func WithForeignKeys() MigrateOption { return func(c *migrateConfig) { c.foreignKeys = true } }
+
+// WithLOBChunkSize overrides the per-object chunk size for the named orm.LOB field
+// (by Go field name) when AutoMigrate provisions its content store, taking
+// precedence over the field's `lob:"chunk=…"` tag. This makes chunk size an
+// operator decision per database — e.g. wired to a CLI flag — while the tag stays
+// the default. It overrides only the chunk size; compression keeps its tag value
+// unless WithLOBCompression is also given. Like the tag, the value is frozen per
+// object at creation and is a default for newly created objects, not a persisted
+// property of the database — pass it consistently across launches, and run
+// AutoMigrate before the first lob.Open so the store is provisioned with it.
+func WithLOBChunkSize(field string, bytes int) MigrateOption {
+	return func(c *migrateConfig) {
+		if bytes <= 0 {
+			c.recordOptErr(fmt.Errorf("orm: WithLOBChunkSize(%q, %d): chunk size must be positive", field, bytes))
+			return
+		}
+		c.addLOBOverride(field, func(o *LOBProvisionOptions) { o.ChunkSize = bytes })
+	}
+}
+
+// WithLOBCompression overrides the at-rest compression level for the named orm.LOB
+// field (by Go field name) when AutoMigrate provisions its content store, taking
+// precedence over the field's `lob:"compress=…"` tag. See WithLOBChunkSize for the
+// per-object/per-launch semantics; it overrides only compression.
+func WithLOBCompression(field string, c Compression) MigrateOption {
+	return func(cfg *migrateConfig) {
+		if c < CompressionNone || c > CompressionBest {
+			cfg.recordOptErr(fmt.Errorf("orm: WithLOBCompression(%q, %d): unknown compression level", field, c))
+			return
+		}
+		cfg.addLOBOverride(field, func(o *LOBProvisionOptions) { o.Compression = c })
+	}
+}
+
+func (c *migrateConfig) addLOBOverride(field string, mut func(*LOBProvisionOptions)) {
+	if c.lobOverrides == nil {
+		c.lobOverrides = map[string][]func(*LOBProvisionOptions){}
+	}
+	c.lobOverrides[field] = append(c.lobOverrides[field], mut)
+}
+
+func (c *migrateConfig) recordOptErr(err error) {
+	if c.optErr == nil {
+		c.optErr = err
+	}
+}
 
 // AutoMigrate brings the table for T into being and in sync, additively. It is
 // introspection-gated: a non-existent table is CREATEd (with its unique indexes
@@ -42,7 +100,11 @@ func AutoMigrate[T any](ctx context.Context, sess liteorm.Session, opts ...Migra
 	if err != nil {
 		return err
 	}
-	return migrateSchema(ctx, sess, s, buildMigrateConfig(opts))
+	cfg := buildMigrateConfig(opts)
+	if cfg.optErr != nil {
+		return cfg.optErr
+	}
+	return migrateSchema(ctx, sess, s, cfg)
 }
 
 // AutoMigrateAll runs AutoMigrate for several models in one call, in the order
@@ -54,7 +116,8 @@ func AutoMigrate[T any](ctx context.Context, sess liteorm.Session, opts ...Migra
 // pointer both work). Migration runs in argument order, so list a referenced table
 // before the table that points at it. The options that AutoMigrate[T] takes are
 // not applied here (Go has no variadic type parameters to mix them cleanly); when
-// you need WithForeignKeys, call the generic AutoMigrate[T] per model.
+// you need WithForeignKeys or a WithLOB* override, call the generic AutoMigrate[T]
+// per model.
 func AutoMigrateAll(ctx context.Context, sess liteorm.Session, models ...any) error {
 	for _, m := range models {
 		s, err := SchemaOfType(reflect.TypeOf(m))
@@ -128,7 +191,7 @@ func migrateSchema(ctx context.Context, sess liteorm.Session, s *Schema, cfg mig
 	// Provision any declared large-object stores. Loud error if a LOB field is
 	// present but no provisioner is registered (the dialect/sqlite/lob import is
 	// missing); a no-op for a model with no LOB fields.
-	if err := provisionLOBs(ctx, sess, s); err != nil {
+	if err := provisionLOBs(ctx, sess, s, cfg); err != nil {
 		return err
 	}
 	return nil

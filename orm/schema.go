@@ -88,7 +88,11 @@ type Relation struct {
 	PolymorphicValue string
 }
 
-// Schema is a model's resolved metadata.
+// Schema is a model's resolved metadata. The value returned by SchemaOf /
+// SchemaOfType is shared and process-cached: read it for introspection (column
+// names, LOB options, …), but do not mutate it — that aliases the cache and is
+// unsupported. To change LOB chunk size / compression per database, pass
+// AutoMigrate's WithLOBChunkSize / WithLOBCompression options instead.
 type Schema struct {
 	Type       reflect.Type
 	Table      string
