@@ -86,3 +86,73 @@ func TestPin_InheritsLogging(t *testing.T) {
 		t.Fatal("pinned session did not honor the inherited WithSQLArgs(false)")
 	}
 }
+
+// TestPin_InheritsLogArgValues is the positive counterpart: with WithSQLArgs(true)
+// the pinned session must log the actual arg value, proving the setting is
+// inherited rather than hard-coded.
+func TestPin_InheritsLogArgValues(t *testing.T) {
+	ctx := context.Background()
+	rec := &recHandler{}
+	db, err := sqlite.Open(
+		filepath.Join(t.TempDir(), "pin2.db"),
+		liteorm.WithLogger(slog.New(rec)),
+		liteorm.WithSQLArgs(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	bound, _, release, err := sqlite.Pin(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	if _, err := bound.ExecContext(ctx, `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bound.ExecContext(ctx, `INSERT INTO t (v) VALUES (?)`, "shown"); err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, r := range rec.recs {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == liteorm.AttrArgs {
+				if as, ok := a.Value.Any().([]any); ok {
+					for _, v := range as {
+						if v == "shown" {
+							found = true
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	if !found {
+		t.Fatal("pinned session with WithSQLArgs(true) did not log the arg value")
+	}
+}
+
+// TestPin_RejectsTransaction confirms Pin requires a *liteorm.DB and rejects a
+// transaction handle (a *BoundTx is not pinnable to a single connection).
+func TestPin_RejectsTransaction(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.Open(filepath.Join(t.TempDir(), "pin3.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, _, _, err := sqlite.Pin(ctx, tx); err == nil {
+		t.Fatal("Pin of a transaction should return an error")
+	}
+}
