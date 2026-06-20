@@ -45,7 +45,7 @@ Events: message `liteorm.query` / `liteorm.exec`; attributes `sql`, `args`, `dur
 | Toggle by env | `if os.Getenv("APP_DEBUG") != "" { lg = devlog.New(os.Stderr, nil) }` |
 | Hide arg values (secrets) | add `liteorm.WithSQLArgs(false)` (logs arg count only) |
 
-Large bind values are bounded automatically: a `[]byte`/`string` arg over 256 bytes logs as a `<N bytes>` summary or truncated preview, so a multi-megabyte blob/text is never dumped. `orm.LOB` content never appears (it binds an id, not bytes). A `sqlite.Pin`-ned connection inherits the DB's logger and `WithSQLArgs` setting.
+Large bind values are bounded automatically: a `string` over 256 bytes truncates to a preview and a `[]byte` over 256 bytes logs as a `<N bytes>` summary, so a multi-megabyte blob/text is never dumped (an over-cap `[]byte` arrives as that summary string, so a custom handler shouldn't assume blob args stay `[]byte`). `orm.LOB` content never appears (it binds an id, not bytes). A `sqlite.Pin`-ned connection inherits the DB's logger and `WithSQLArgs`. Not logged (no bind values, below the session layer): savepoint control (`SAVEPOINT`/`RELEASE`/`ROLLBACK TO`) and Postgres `LISTEN`/`UNLISTEN`/`CopyFrom`.
 
 ## Pitfalls
 

@@ -63,7 +63,9 @@ func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []an
 // summary and a string longer than this is truncated with a "…(N bytes)" marker,
 // so logging a statement that binds a multi-megabyte blob or text never dumps the
 // whole payload into the log (or renders binary as escaped text). Large-object
-// content is never affected — an orm.LOB binds an id, not bytes.
+// content is never affected — an orm.LOB binds an id, not bytes. Note an over-cap
+// []byte becomes the summary string in the logged args, so a handler that
+// type-switches on AttrArgs should not assume blob elements stay []byte.
 const maxLoggedArg = 256
 
 // capArgs returns args with any oversized []byte/string bounded for logging,
