@@ -7,7 +7,7 @@ require (
 	gosqlite.org/blobstore v0.10.0
 	gosqlite.org/vfs/compress v0.10.0
 	gosqlite.org/vfs/crypto v0.10.0
-	liteorm.org v0.11.0
+	liteorm.org v0.12.0
 )
 
 require (
