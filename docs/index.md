@@ -17,15 +17,17 @@ New here? Start with **[Getting started](getting-started.md)**, then pick the fr
 - [Query builder](guides/query.md) — `query.Select[T]`, typed predicates, joins, unions, subqueries, streaming, the Repo, and the raw escape hatch.
 - [ORM models](guides/orm.md) — declarative structs, tags, `AutoMigrate`, the Repo, conventions.
 - [Associations](guides/associations.md) — has-many / has-one / belongs-to / many-to-many with N+1-safe eager loading.
-- [Hooks](guides/hooks.md) — typed, context-first lifecycle hooks.
+- [Hooks](guides/hooks.md) — typed, context-first lifecycle hooks, including the `AfterFind` read hook and `BeforeSave`/`AfterSave`.
+- [Field codecs](guides/field-codecs.md) — transform a field on read/write (JSON/gob columns, encryption, compression) without changing its Go type, uniformly on both front-ends.
 - [Soft delete](guides/soft-delete.md) — tri-state scopes and the unique-index behavior.
-- [Transactions](guides/transactions.md) — savepoints and `query`↔`orm` interop on one transaction.
+- [Transactions](guides/transactions.md) — the `Transaction`/`TransactionRetry` closure helpers, savepoints, and `query`↔`orm` interop on one transaction.
 
 **Operations**
 
 - [Migrations](guides/migrations.md) — additive `AutoMigrate`, reviewable diffs, and the migration runner.
 - [Errors](guides/errors.md) — normalized sentinels that work the same across every backend.
 - [Statement logging & debugging](guides/logging.md) — watch every executed SQL statement, traced to the Go line that issued it, via slog or a colored handler.
+- [Observability](guides/observability.md) — wrap every statement with an observer for tracing, metrics, or audit; the built-in logging rides the same seam.
 - [Code generation](guides/codegen.md) — typed columns, models from a live database, SQL→typed-Go, the sqlc plugin, and the gorm porter.
 
 **Backend-specific**
@@ -33,7 +35,7 @@ New here? Start with **[Getting started](getting-started.md)**, then pick the fr
 - [SQLite search](guides/sqlite-search.md) — vector, full-text, and hybrid (reciprocal-rank-fusion) search.
 - [Large objects](guides/large-objects.md) — store files, uploads, and growing binary content as streamed `io.ReaderAt`/`io.WriterAt`, never loaded whole.
 - [At-rest encryption](guides/encryption.md) — open an encrypted SQLite database; the on-disk file is ciphertext, readable only with the key.
-- [Compressed databases](guides/compression.md) — store a SQLite database compressed on disk (snapshot model); inflate on open, recompress on close.
+- [Compressed & encrypted databases (vault)](guides/vault.md) — store a whole SQLite database compressed and/or encrypted at rest in a live, per-transaction-durable container.
 - [SQLite changesets](guides/sqlite-changeset.md) — capture, apply, invert, and concat changesets for audit and replication.
 - [Postgres](guides/postgres.md) — LISTEN/NOTIFY and the typed JSONB / array operators.
 

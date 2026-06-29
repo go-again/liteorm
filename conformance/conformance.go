@@ -67,6 +67,53 @@ func Run(t *testing.T, b Backend) {
 	t.Run("QueryFinishersAndBulk", func(t *testing.T) { queryFinishersAndBulk(t, b) })
 	t.Run("MigrateRunner", func(t *testing.T) { migrateRunner(t, b) })
 	t.Run("CodegenFromDB", func(t *testing.T) { codegenFromDB(t, b) })
+	t.Run("FieldCodecRoundTrip", func(t *testing.T) { codecRoundTrip(t, b) })
+}
+
+// cfDoc exercises field codecs across dialects: a JSON (TEXT) column and a gob
+// (BLOB) column, both round-tripped through AutoMigrate and the repository.
+type cfDoc struct {
+	ID   int64          `orm:"id,pk"`
+	Meta map[string]any `orm:"meta,codec:json"`
+	Tags []string       `orm:"tags,codec:gob"`
+}
+
+func (cfDoc) TableName() string { return "cf_docs" }
+
+func codecRoundTrip(t *testing.T, b Backend) {
+	ctx := context.Background()
+	db, err := b.Open()
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS cf_docs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := orm.AutoMigrate[cfDoc](ctx, db); err != nil {
+		t.Fatalf("automigrate: %v", err)
+	}
+	repo := orm.NewRepo[cfDoc](db)
+	d := &cfDoc{Meta: map[string]any{"k": "v"}, Tags: []string{"a", "b"}}
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// orm read decodes both codecs.
+	got, err := repo.Get(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta["k"] != "v" || len(got.Tags) != 2 || got.Tags[0] != "a" {
+		t.Fatalf("orm codec round-trip on %s = %+v", b.Name, got)
+	}
+	// query front-end read decodes them the same way (uniform across front-ends).
+	q, err := query.Select[cfDoc](db).Where("id = ?", d.ID).First(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Meta["k"] != "v" || len(q.Tags) != 2 {
+		t.Fatalf("query codec round-trip on %s = %+v", b.Name, q)
+	}
 }
 
 func codegenFromDB(t *testing.T, b Backend) {

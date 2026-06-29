@@ -25,8 +25,9 @@ LiteORM's `orm` front-end is deliberately close to gorm in spirit — declarativ
 | `db.AutoMigrate(&A{}, &B{})` | `orm.AutoMigrateAll(ctx, db, A{}, B{})` |
 | `db.Scopes(fn)` | `repo.Scopes(fn)` |
 | `db.Count(&n)` | `repo.Count(ctx)` |
-| `db.Transaction(func(tx) { ... })` | `tx, _ := db.Begin(ctx); … ; tx.Commit(ctx)` (see below) |
+| `db.Transaction(func(tx) { ... })` | `liteorm.Transaction(ctx, db, func(tx) error { ... })` (auto commit/rollback; `TransactionRetry` adds retry-on-contention) |
 | `db.Raw(sql).Scan(&out)` | `query.Raw[T](ctx, db, sql, args...)` |
+| `gorm:"serializer:json"` field | works as-is, or `orm:"col,codec:json"` — see [field codecs](field-codecs.md) |
 
 ## What's different (and why)
 
@@ -41,19 +42,12 @@ LiteORM's `orm` front-end is deliberately close to gorm in spirit — declarativ
 
 ### Transactions
 
-There's no closure-based `Transaction` helper; you drive the transaction directly, and a nested `Begin` is a savepoint:
+`liteorm.Transaction(ctx, db, fn)` is the closure helper, like gorm's `db.Transaction` — it commits when `fn` returns nil, rolls back on an error or panic. `liteorm.TransactionRetry` adds something gorm's helper doesn't: automatic retry of the whole closure on a normalized serialization/deadlock failure. You can still drive a transaction directly (a nested `Begin` is a savepoint) when you want manual control:
 
 ```go
-tx, err := db.Begin(ctx)
-if err != nil {
-	return err
-}
-defer tx.Rollback(ctx) // no-op after Commit
-
-if err := orm.NewRepo[User](tx).Create(ctx, &u); err != nil {
-	return err // deferred Rollback fires
-}
-return tx.Commit(ctx)
+err := liteorm.Transaction(ctx, db, func(tx *liteorm.BoundTx) error {
+	return orm.NewRepo[User](tx).Create(ctx, &u)
+})
 ```
 
 See [Transactions](transactions.md).

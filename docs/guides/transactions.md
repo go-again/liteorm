@@ -39,6 +39,34 @@ posts := orm.NewRepo[Post](tx)
 err = posts.Create(ctx, &p)
 ```
 
+## The closure helper
+
+`liteorm.Transaction` runs a function in a transaction and handles the commit, rollback, and panic-rollback for you — the manual dance above, done correctly once. It commits when the function returns nil, rolls back when it returns an error (returning that error), and rolls back and re-raises if the function panics.
+
+```go
+err := liteorm.Transaction(ctx, db, func(tx *liteorm.BoundTx) error {
+	if err := orm.NewRepo[Account](tx).Update(ctx, &from); err != nil {
+		return err // rolls back
+	}
+	return orm.NewRepo[Account](tx).Update(ctx, &to)
+})
+```
+
+### Retrying on contention
+
+Under `serializable` (or `repeatable read`) isolation, a transaction can fail with a serialization or deadlock error that is safe to retry — the database is telling you to run the whole unit of work again. `liteorm.TransactionRetry` does exactly that, re-running the function on a fresh transaction while the error is a retryable one ([`liteorm.IsRetryable`](errors.md) — a deadlock or serialization failure, normalized identically across every backend), and returning any other error (or success) immediately:
+
+```go
+err := liteorm.TransactionRetry(ctx, db, liteorm.RetryPolicy{
+	Max:     5,
+	Backoff: func(attempt int) time.Duration { return time.Duration(attempt) * 10 * time.Millisecond },
+}, func(tx *liteorm.BoundTx) error {
+	return transfer(ctx, tx, from, to, amount)
+})
+```
+
+Each attempt is a new transaction, so the function must be safe to run more than once. A `nil` `Backoff` retries immediately; a cancelled context stops the wait between attempts.
+
 ## Nested transactions are savepoints
 
 Calling `.Begin(ctx)` on a transaction opens a nested transaction implemented as a SAVEPOINT. Rolling back the nested handle undoes only the work done since that savepoint; the outer transaction keeps everything before it. This lets you make part of a unit of work optional without abandoning the whole thing.

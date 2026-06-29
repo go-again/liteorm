@@ -168,13 +168,17 @@ func (r *Repo[T]) Create(ctx context.Context, v *T) error {
 	if err != nil {
 		return err
 	}
-	ev := &Event[T]{Sess: r.sess, Model: v}
+	cols := r.writeColumns(s, false)
+	ev := &Event[T]{Sess: r.sess, Model: v, Columns: cols}
 	if err := fireBeforeCreate(ctx, ev); err != nil {
 		return err
 	}
 	setAutoTimes(s, v, true)
-	cols := r.writeColumns(s, false)
-	ins := sqlgen.Insert{Table: s.Table, Columns: cols, Rows: [][]any{scan.Values(v, cols)}}
+	row, err := scan.EncodeValues(v, cols)
+	if err != nil {
+		return err
+	}
+	ins := sqlgen.Insert{Table: s.Table, Columns: cols, Rows: [][]any{row}}
 	if err := query.InsertCapturingPK(ctx, r.sess, ins, v); err != nil {
 		return err
 	}
@@ -210,6 +214,9 @@ func (r *Repo[T]) Get(ctx context.Context, keys ...any) (T, error) {
 	if len(out) == 0 {
 		return zero, liteorm.ErrNoRows
 	}
+	if err := fireAfterFind(ctx, r.sess, out); err != nil {
+		return zero, err
+	}
 	return out[0], nil
 }
 
@@ -233,7 +240,14 @@ func (r *Repo[T]) GetByKeys(ctx context.Context, keys ...any) ([]T, error) {
 	if pred, ok := r.scopePredicate(s); ok {
 		q = q.Where(pred)
 	}
-	return q.All(ctx)
+	rows, err := q.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fireAfterFind(ctx, r.sess, rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // pkWhere builds the WHERE expressions matching v's primary key — every column of
@@ -258,7 +272,14 @@ func (r *Repo[T]) Find(ctx context.Context) ([]T, error) {
 	if err != nil {
 		return nil, err
 	}
-	return q.All(ctx)
+	rows, err := q.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := fireAfterFind(ctx, r.sess, rows); err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // Update writes v's non-key columns to the row identified by its PK, firing
@@ -271,13 +292,16 @@ func (r *Repo[T]) Update(ctx context.Context, v *T) error {
 	if len(s.PKs) == 0 {
 		return fmt.Errorf("orm: type %T has no primary key", *v)
 	}
-	ev := &Event[T]{Sess: r.sess, Model: v}
+	cols := r.writeColumns(s, true)
+	ev := &Event[T]{Sess: r.sess, Model: v, Columns: cols}
 	if err := fireBeforeUpdate(ctx, ev); err != nil {
 		return err
 	}
 	setAutoTimes(s, v, false)
-	cols := r.writeColumns(s, true)
-	vals := scan.Values(v, cols)
+	vals, err := scan.EncodeValues(v, cols)
+	if err != nil {
+		return err
+	}
 	set := make([]sqlgen.SetClause, len(cols))
 	for i, c := range cols {
 		set[i] = sqlgen.SetClause{Column: c, Arg: vals[i]}
@@ -343,7 +367,11 @@ func (r *Repo[T]) delete(ctx context.Context, v *T, force bool) error {
 		set := []sqlgen.SetClause{{Column: s.SoftDelete.Column, Arg: time.Now().UTC()}}
 		for _, f := range s.Fields {
 			if f.AutoUpdate {
-				set = append(set, sqlgen.SetClause{Column: f.Column, Arg: scan.Values(v, []string{f.Column})[0]})
+				av, encErr := scan.EncodeValues(v, []string{f.Column})
+				if encErr != nil {
+					return encErr
+				}
+				set = append(set, sqlgen.SetClause{Column: f.Column, Arg: av[0]})
 			}
 		}
 		up := sqlgen.Update{Table: s.Table, Set: set, Where: where}

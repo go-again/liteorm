@@ -37,10 +37,11 @@ const (
 
 // logStmt emits a statement event. The caller has already confirmed the logger
 // is debug-enabled, so the source-location walk only runs when something will
-// consume it.
-func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []any, logArgs bool, start time.Time, rows int64, err error) {
+// consume it. dur is the already-measured statement duration (the observer layer
+// times it once and passes it here, so it is not recomputed).
+func logStmt(ctx context.Context, log *slog.Logger, msg, query string, args []any, logArgs bool, dur time.Duration, rows int64, err error) {
 	attrs := make([]slog.Attr, 0, 6)
-	attrs = append(attrs, slog.String(AttrSQL, query), slog.Duration(AttrDur, time.Since(start)))
+	attrs = append(attrs, slog.String(AttrSQL, query), slog.Duration(AttrDur, dur))
 	if logArgs {
 		attrs = append(attrs, slog.Any(AttrArgs, capArgs(args)))
 	} else {

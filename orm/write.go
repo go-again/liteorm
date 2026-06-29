@@ -52,6 +52,9 @@ func (r *Repo[T]) FirstOrCreate(ctx context.Context, v *T, conds ...query.Predic
 	got, err := q.First(ctx)
 	if err == nil {
 		*v = got
+		if err := fireAfterFindPtr(ctx, r.sess, v); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
 	if !errors.Is(err, liteorm.ErrNoRows) {
@@ -77,6 +80,9 @@ func (r *Repo[T]) FirstOrInit(ctx context.Context, v *T, conds ...query.Predicat
 	got, err := q.First(ctx)
 	if err == nil {
 		*v = got
+		if err := fireAfterFindPtr(ctx, r.sess, v); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 	if errors.Is(err, liteorm.ErrNoRows) {
@@ -87,17 +93,19 @@ func (r *Repo[T]) FirstOrInit(ctx context.Context, v *T, conds ...query.Predicat
 
 // Upsert inserts v, or on a conflict with oc's columns updates the existing row —
 // INSERT ... ON CONFLICT DO UPDATE (gorm/xorm upsert) in a single statement,
-// unlike FirstOrCreate's lookup-then-insert. It fires Before/AfterCreate hooks and
-// stamps auto timestamps, then delegates to the query front-end (which reads a
-// generated key back where the dialect supports it). The update path overwrites
-// the columns oc updates; narrow them with OnConflict(cols...).DoUpdate(cols...)
-// to preserve a column like created_at.
+// unlike FirstOrCreate's lookup-then-insert. It fires the Create hook set
+// (Before/AfterCreate and Before/AfterSave) and stamps auto timestamps. Because
+// it is one statement, the hooks fire the same way whether the row is inserted or
+// updated — there is no separate update-branch hook. It then delegates to the
+// query front-end (which reads a generated key back where the dialect supports
+// it). The update path overwrites the columns oc updates; narrow them with
+// OnConflict(cols...).DoUpdate(cols...) to preserve a column like created_at.
 func (r *Repo[T]) Upsert(ctx context.Context, v *T, oc query.OnConflictSpec) error {
 	s, err := SchemaOf[T]()
 	if err != nil {
 		return err
 	}
-	ev := &Event[T]{Sess: r.sess, Model: v}
+	ev := &Event[T]{Sess: r.sess, Model: v, Columns: r.writeColumns(s, false)}
 	if err := fireBeforeCreate(ctx, ev); err != nil {
 		return err
 	}
@@ -124,7 +132,7 @@ func (r *Repo[T]) Restore(ctx context.Context, v *T) error {
 	if len(s.PKs) == 0 {
 		return fmt.Errorf("orm: type %T has no primary key", *v)
 	}
-	ev := &Event[T]{Sess: r.sess, Model: v}
+	ev := &Event[T]{Sess: r.sess, Model: v, Columns: []string{s.SoftDelete.Column}}
 	if err := fireBeforeUpdate(ctx, ev); err != nil {
 		return err
 	}
@@ -183,13 +191,15 @@ func (r *Repo[T]) CreateInBatches(ctx context.Context, vs []*T, batchSize int) e
 		rows := make([][]any, len(batch))
 		ops := make([]*Event[T], len(batch))
 		for i, v := range batch {
-			ev := &Event[T]{Sess: r.sess, Model: v}
+			ev := &Event[T]{Sess: r.sess, Model: v, Columns: cols}
 			if err := fireBeforeCreate(ctx, ev); err != nil {
 				return err
 			}
 			setAutoTimes(s, v, true)
 			ops[i] = ev
-			rows[i] = scan.Values(v, cols)
+			if rows[i], err = scan.EncodeValues(v, cols); err != nil {
+				return err
+			}
 		}
 
 		ins := sqlgen.Insert{Table: s.Table, Columns: cols, Rows: rows}

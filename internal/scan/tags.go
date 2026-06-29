@@ -4,15 +4,17 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"reflect"
+	"slices"
 	"strings"
 )
 
 // ColumnInfo is the column identity liteorm derives from a struct field's tags.
 type ColumnInfo struct {
-	Name string
-	PK   bool
-	Auto bool
-	Skip bool
+	Name  string
+	PK    bool
+	Auto  bool
+	Skip  bool
+	Codec string // a field codec name (from `codec:`/`serializer:`), empty for none
 }
 
 // ResolveColumn derives a field's column identity from its tags, in precedence
@@ -25,7 +27,9 @@ func ResolveColumn(sf reflect.StructField) ColumnInfo {
 		if name == "-" {
 			return ColumnInfo{Skip: true}
 		}
-		return finalize(sf, name, hasOpt(opts, "pk"), hasOpt(opts, "auto") || hasOpt(opts, "autoincrement"), hasOpt(opts, "noauto"))
+		ci := finalize(sf, name, hasOpt(opts, "pk"), hasOpt(opts, "auto") || hasOpt(opts, "autoincrement"), hasOpt(opts, "noauto"))
+		ci.Codec = optValue(opts, "codec", "serializer")
+		return ci
 	}
 	if tag, ok := sf.Tag.Lookup("orm"); ok {
 		name, opts := ParseList(tag)
@@ -33,7 +37,9 @@ func ResolveColumn(sf reflect.StructField) ColumnInfo {
 			return ColumnInfo{Skip: true}
 		}
 		pk := hasOpt(opts, "pk") || hasOpt(opts, "primarykey")
-		return finalize(sf, name, pk, hasOpt(opts, "auto") || hasOpt(opts, "autoincrement"), hasOpt(opts, "noauto"))
+		ci := finalize(sf, name, pk, hasOpt(opts, "auto") || hasOpt(opts, "autoincrement"), hasOpt(opts, "noauto"))
+		ci.Codec = optValue(opts, "codec", "serializer")
+		return ci
 	}
 	if tag, ok := sf.Tag.Lookup("gorm"); ok {
 		g := ParseGormTag(tag)
@@ -42,9 +48,31 @@ func ResolveColumn(sf reflect.StructField) ColumnInfo {
 		}
 		_, pk := g["primarykey"]
 		_, auto := g["autoincrement"]
-		return finalize(sf, g["column"], pk, auto, false)
+		ci := finalize(sf, g["column"], pk, auto, false)
+		if s := g["serializer"]; s != "" {
+			ci.Codec = s
+		} else {
+			ci.Codec = g["codec"]
+		}
+		return ci
 	}
 	return finalize(sf, "", false, false, false)
+}
+
+// optValue returns the value of the first `key:value` option in opts whose key
+// (case-insensitive) matches one of keys.
+func optValue(opts []string, keys ...string) string {
+	for _, o := range opts {
+		k, v, ok := strings.Cut(o, ":")
+		if !ok {
+			continue
+		}
+		k = strings.ToLower(strings.TrimSpace(k))
+		if slices.Contains(keys, k) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func finalize(sf reflect.StructField, name string, pk, explicitAuto, noAuto bool) ColumnInfo {

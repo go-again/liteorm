@@ -22,10 +22,14 @@ func NewRepo[T any](sess liteorm.Session) *Repo[T] { return &Repo[T]{sess: sess}
 // plain exec where the dialect lacks it). v is updated in place on RETURNING.
 func (r *Repo[T]) Insert(ctx context.Context, v *T) error {
 	cols := scan.Columns[T](true) // omit auto-increment PK
+	row, err := scan.EncodeValues(v, cols)
+	if err != nil {
+		return err
+	}
 	ins := sqlgen.Insert{
 		Table:   tableName[T](),
 		Columns: cols,
-		Rows:    [][]any{scan.Values(v, cols)},
+		Rows:    [][]any{row},
 	}
 	return InsertCapturingPK(ctx, r.sess, ins, v)
 }
@@ -49,7 +53,11 @@ func (r *Repo[T]) InsertMany(ctx context.Context, vs []T) error {
 		end := min(start+maxRows, len(vs))
 		rows := make([][]any, 0, end-start)
 		for i := start; i < end; i++ {
-			rows = append(rows, scan.Values(&vs[i], cols))
+			row, err := scan.EncodeValues(&vs[i], cols)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, row)
 		}
 		ins := sqlgen.Insert{Table: table, Columns: cols, Rows: rows}
 		q, args, err := ins.Build(r.sess.Dialect())
@@ -82,7 +90,7 @@ type sliceRowSource[T any] struct {
 
 func (s *sliceRowSource[T]) Next() bool { s.i++; return s.i <= len(s.vs) }
 func (s *sliceRowSource[T]) Values() ([]any, error) {
-	return scan.Values(&s.vs[s.i-1], s.cols), nil
+	return scan.EncodeValues(&s.vs[s.i-1], s.cols)
 }
 func (s *sliceRowSource[T]) Err() error { return nil }
 
@@ -99,10 +107,14 @@ func (r *Repo[T]) Upsert(ctx context.Context, v *T, oc OnConflictSpec) error {
 			return fmt.Errorf("liteorm: upsert has no columns to update")
 		}
 	}
+	row, err := scan.EncodeValues(v, cols)
+	if err != nil {
+		return err
+	}
 	ins := sqlgen.Insert{
 		Table:      tableName[T](),
 		Columns:    cols,
-		Rows:       [][]any{scan.Values(v, cols)},
+		Rows:       [][]any{row},
 		OnConflict: &sqlgen.Conflict{Columns: oc.Columns, Update: update, Nothing: oc.Nothing},
 	}
 	return InsertCapturingPK(ctx, r.sess, ins, v)
@@ -235,7 +247,10 @@ func (r *Repo[T]) Update(ctx context.Context, v *T) error {
 		return fmt.Errorf("liteorm: type %T has no primary key", *v)
 	}
 	cols := scan.Columns[T](true) // non-auto-PK columns
-	vals := scan.Values(v, cols)
+	vals, err := scan.EncodeValues(v, cols)
+	if err != nil {
+		return err
+	}
 	set := make([]sqlgen.SetClause, len(cols))
 	for i, c := range cols {
 		set[i] = sqlgen.SetClause{Column: c, Arg: vals[i]}

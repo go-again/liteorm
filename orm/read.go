@@ -87,12 +87,19 @@ func (r *Repo[T]) selectBuilder() (*query.SelectBuilder[T], error) {
 
 // First returns the first row matching the current scopes, or liteorm.ErrNoRows.
 func (r *Repo[T]) First(ctx context.Context) (T, error) {
+	var zero T
 	q, err := r.selectBuilder()
 	if err != nil {
-		var zero T
 		return zero, err
 	}
-	return q.First(ctx)
+	got, err := q.First(ctx)
+	if err != nil {
+		return zero, err
+	}
+	if err := fireAfterFindPtr(ctx, r.sess, &got); err != nil {
+		return zero, err
+	}
+	return got, nil
 }
 
 // Count returns how many rows match the current scopes.
@@ -150,6 +157,9 @@ func (r *Repo[T]) FindInBatches(ctx context.Context, batchSize int, fn func(batc
 		}
 		if len(batch) == 0 {
 			return nil
+		}
+		if err := fireAfterFind(ctx, r.sess, batch); err != nil {
+			return err
 		}
 		if err := fn(batch); err != nil {
 			return err

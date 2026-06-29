@@ -13,12 +13,13 @@ Each `SKILL.md` begins with YAML frontmatter (`name` + a one-sentence `descripti
 | [using-liteorm](using-liteorm/SKILL.md) | Starting with liteorm: choosing the `query` vs `orm` front-end, opening a backend, first CRUD, the shared Session/transaction model. |
 | [query-builder](query-builder/SKILL.md) | Writing explicit, typed queries: predicates, joins, Union, subqueries, EXISTS, Iter streaming, Raw, the `query.Repo`. |
 | [orm-models](orm-models/SKILL.md) | Declarative models: structs + tags, AutoMigrate, the `orm.Repo`, associations (Load/Attach), hooks, soft delete. |
+| [field-codecs](field-codecs/SKILL.md) | Transforming a field on read/write (JSON/gob columns, encryption, compression) without changing its Go type — the `codec:` tag, applied on both front-ends. |
 | [migrations](migrations/SKILL.md) | Evolving a schema: AutoMigrate (additive), GenerateMigration (reviewable), the migrate runner, WritePair. |
 | [codegen](codegen/SKILL.md) | Generating typed columns/models/queries: `liteorm gen`, the sqlc plugin, the gorm porter. |
 | [sqlite-search](sqlite-search/SKILL.md) | SQLite vector (sqlite-vec), full-text (FTS5), and hybrid RRF search. |
 | [large-objects](large-objects/SKILL.md) | Storing large/growing binary content (files, uploads, blobs) in SQLite as streamed `io.ReaderAt`/`io.WriterAt` via an `orm.LOB` field. |
 | [encryption](encryption/SKILL.md) | Opening a SQLite database with at-rest (transparent page-level) encryption: keys, reopening, constraints. |
-| [compressed-database](compressed-database/SKILL.md) | Storing a whole SQLite database compressed on disk (archival, distribution, embedded `.db`): `OpenCompressed` and the snapshot-model trade-offs. |
+| [vault](vault/SKILL.md) | Storing a whole SQLite database compressed and/or encrypted at rest in a gosqlite vfs/vault container (live, per-transaction durable): the `vault` subpackage. |
 | [postgres-advanced](postgres-advanced/SKILL.md) | Postgres LISTEN/NOTIFY, and JSONB / array typed operators. |
 | [porting-from-gorm](porting-from-gorm/SKILL.md) | Migrating a gorm codebase: native gorm-tag reading and rewriting to native `orm` tags; what differs. |
 | [logging](logging/SKILL.md) | Seeing/tracing executed SQL while developing: debug logging via slog or the colored handler, traced to your code. |

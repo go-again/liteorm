@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"liteorm.org/codec"
 	"liteorm.org/dialect"
 	"liteorm.org/internal/scan"
 )
@@ -57,6 +58,7 @@ type Field struct {
 	Readable   bool   // included in SELECT column lists
 	Writable   bool   // included in INSERT/UPDATE column lists
 	Size       int
+	Codec      string // field codec name (orm/gorm "codec:"/"serializer:"), empty for none
 	sqlType    string // explicit type override (orm/gorm "type:"), else dialect-derived
 	dialField  dialect.Field
 }
@@ -174,6 +176,9 @@ func schemaOf(t reflect.Type) (*Schema, error) {
 func buildSchema(t reflect.Type) (*Schema, error) {
 	s := &Schema{Type: t, Table: tableName(t), Relations: map[string]*Relation{}}
 	walkColumns(t, nil, "", s)
+	if err := validateCodecs(s); err != nil {
+		return nil, err
+	}
 	if len(s.PKs) == 1 {
 		s.PK = s.PKs[0] // the single-PK convenience; composite keys leave it nil
 	} else if len(s.PKs) > 1 {
@@ -229,6 +234,16 @@ func addColumn(sf reflect.StructField, idx []int, colPrefix string, ci scan.Colu
 	m := readFieldMeta(sf)
 	col := colPrefix + ci.Name
 	notNull := (m.notNull || ci.PK) && !m.softDelete
+	goType := scan.GoTypeName(sf.Type)
+	// A codec stores its encoded representation, so the column type follows the
+	// codec's storage kind (TEXT/BLOB/INTEGER), not the Go field's type — unless
+	// an explicit `type:` override is given. An unknown codec is caught by
+	// validateCodecs after the walk.
+	if ci.Codec != "" && m.typeOverride == "" {
+		if c, ok := codec.Get(ci.Codec); ok {
+			goType = codecGoType(codec.StorageKindOf(c))
+		}
+	}
 	f := &Field{
 		GoName: sf.Name, Column: col, Index: idx,
 		PK: ci.PK, Auto: ci.Auto, NotNull: notNull, Unique: m.unique,
@@ -236,9 +251,10 @@ func addColumn(sf reflect.StructField, idx []int, colPrefix string, ci scan.Colu
 		HasDefault: m.hasDef, Default: m.def, SoftDelete: m.softDelete,
 		AutoCreate: m.autoCreate, AutoUpdate: m.autoUpdate, Check: m.check,
 		Readable: m.readable, Writable: m.writable, Size: m.size,
+		Codec:   ci.Codec,
 		sqlType: m.typeOverride,
 		dialField: dialect.Field{
-			Name: col, GoType: scan.GoTypeName(sf.Type), PrimaryKey: ci.PK,
+			Name: col, GoType: goType, PrimaryKey: ci.PK,
 			AutoIncrement: ci.Auto, Nullable: !notNull, Size: m.size,
 		},
 	}
@@ -355,4 +371,42 @@ func readFieldMeta(sf reflect.StructField) fieldMeta {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
+}
+
+// validateCodecs fails schema build (and so AutoMigrate) loudly when a field
+// names a codec that is not registered, or names one on a primary-key column —
+// naming the field — rather than silently storing the raw Go value or
+// round-tripping a mismatched key.
+//
+// A codec on a primary key is rejected because identity columns are bound raw
+// in WHERE/keyset clauses (so an encoded stored key would never match), and a
+// non-deterministic codec (encryption) could never match at all. The same
+// limitation applies to foreign-key, join-table, and polymorphic-type columns,
+// which association code writes raw — keep codecs to ordinary value columns.
+func validateCodecs(s *Schema) error {
+	for _, f := range s.Fields {
+		if f.Codec == "" {
+			continue
+		}
+		if f.PK {
+			return fmt.Errorf("orm: field %s.%s is a primary key and cannot use codec %q (identity columns are matched raw; encode/encrypt only value columns)", s.Table, f.GoName, f.Codec)
+		}
+		if _, ok := codec.Get(f.Codec); !ok {
+			return fmt.Errorf("orm: field %s.%s names codec %q, which is not registered (register it during init, before AutoMigrate)", s.Table, f.GoName, f.Codec)
+		}
+	}
+	return nil
+}
+
+// codecGoType maps a codec's storage kind to the canonical Go-type token the
+// dialect maps to a column type, so a codec'd column migrates as TEXT/BLOB/INTEGER.
+func codecGoType(k codec.StorageKind) string {
+	switch k {
+	case codec.Blob:
+		return "[]byte"
+	case codec.Integer:
+		return "int64"
+	default:
+		return "string"
+	}
 }

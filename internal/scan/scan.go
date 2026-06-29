@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"liteorm.org/codec"
 )
 
 // Rows is the minimal row cursor scan needs. liteorm.Rows satisfies it.
@@ -30,6 +32,7 @@ type field struct {
 	pk    bool
 	auto  bool
 	kind  reflect.Kind
+	codec codec.Codec // a field codec, or nil for a plain column
 }
 
 type plan struct {
@@ -86,11 +89,33 @@ func buildPlan(t reflect.Type) *plan {
 			}
 			name := colPrefix + ci.Name
 			p.byDB[name] = len(p.fields)
-			p.fields = append(p.fields, field{index: idx, db: name, kind: ft.Kind(), pk: ci.PK, auto: ci.Auto})
+			p.fields = append(p.fields, field{index: idx, db: name, kind: ft.Kind(), pk: ci.PK, auto: ci.Auto, codec: codecFor(ci.Codec)})
 		}
 	}
 	walk(t, nil, "")
 	return p
+}
+
+// codecFor resolves a codec name to its registered Codec. A named-but-
+// unregistered codec resolves to an errCodec, so the failure is loud at the
+// field's first read or write rather than silently skipped (the contract is to
+// register codecs during init, before first use).
+func codecFor(name string) codec.Codec {
+	if name == "" {
+		return nil
+	}
+	if c, ok := codec.Get(name); ok {
+		return c
+	}
+	return errCodec{name: name}
+}
+
+type errCodec struct{ name string }
+
+func (e errCodec) Encode(any) (any, error) { return nil, e.err() }
+func (e errCodec) Decode(any, any) error   { return e.err() }
+func (e errCodec) err() error {
+	return fmt.Errorf("scan: codec %q is not registered (register it during init, before first use)", e.name)
 }
 
 // All collects every row of rows as a typed T. It closes rows.
@@ -183,12 +208,34 @@ func Into[T any](rows Rows, v *T) error {
 func scanRow(p *plan, rows Rows, rv reflect.Value, cols []string, dest []any, skip *any) error {
 	for i, c := range cols {
 		if fi, ok := p.byDB[c]; ok {
-			dest[i] = scanDest(fieldByIndexAlloc(rv, p.fields[fi].index))
+			f := &p.fields[fi]
+			fv := fieldByIndexAlloc(rv, f.index)
+			if f.codec != nil {
+				dest[i] = codecScanner{c: f.codec, dst: fv}
+			} else {
+				dest[i] = scanDest(fv)
+			}
 		} else {
 			dest[i] = skip
 		}
 	}
 	return rows.Scan(dest...)
+}
+
+// codecScanner decodes a column value into a codec'd field. It is the read twin
+// of EncodeValues, and rides the same sql.Scanner path the bool adapter proves
+// works across every backend. A NULL column zeroes the field.
+type codecScanner struct {
+	c   codec.Codec
+	dst reflect.Value
+}
+
+func (s codecScanner) Scan(src any) error {
+	if src == nil {
+		s.dst.SetZero()
+		return nil
+	}
+	return s.c.Decode(src, s.dst.Addr().Interface())
 }
 
 // scanDest returns a scan target for a field, wrapping bool fields so a driver
@@ -285,7 +332,13 @@ func AllKeyedReflect(rows Rows, keyCol string, elem reflect.Type) (keys []any, i
 				dest[i] = &key
 			default:
 				if fi, ok := p.byDB[c]; ok {
-					dest[i] = scanDest(fieldByIndexAlloc(rv, p.fields[fi].index))
+					f := &p.fields[fi]
+					fv := fieldByIndexAlloc(rv, f.index)
+					if f.codec != nil {
+						dest[i] = codecScanner{c: f.codec, dst: fv}
+					} else {
+						dest[i] = scanDest(fv)
+					}
 				} else {
 					dest[i] = &skip
 				}
@@ -314,7 +367,10 @@ func Columns[T any](skipAuto bool) []string {
 	return cols
 }
 
-// Values returns the field values of v for the given db columns, in order.
+// Values returns the field values of v for the given db columns, in order. It
+// does NOT apply field codecs — it is for raw field reads (keyset cursors,
+// zero-checks, primary-key WHERE values). Use EncodeValues for values bound into
+// a column on the write path.
 func Values[T any](v *T, cols []string) []any {
 	p := planFor[T]()
 	rv := reflect.ValueOf(v).Elem()
@@ -325,6 +381,37 @@ func Values[T any](v *T, cols []string) []any {
 		}
 	}
 	return out
+}
+
+// EncodeValues is the write-path twin of Values: it returns v's field values for
+// the given columns, applying each codec'd field's Encode so the bound value is
+// the stored representation. A nil pointer field stores NULL (it is not encoded).
+// A codec error — including a named-but-unregistered codec — is returned.
+func EncodeValues[T any](v *T, cols []string) ([]any, error) {
+	p := planFor[T]()
+	rv := reflect.ValueOf(v).Elem()
+	out := make([]any, len(cols))
+	for i, c := range cols {
+		fi, ok := p.byDB[c]
+		if !ok {
+			continue
+		}
+		f := &p.fields[fi]
+		fv := fieldByIndexAlloc(rv, f.index)
+		if f.codec == nil {
+			out[i] = fv.Interface()
+			continue
+		}
+		if fv.Kind() == reflect.Pointer && fv.IsNil() {
+			continue // a nil pointer field stores NULL, not an encoded zero
+		}
+		enc, err := f.codec.Encode(fv.Interface())
+		if err != nil {
+			return nil, fmt.Errorf("scan: encode column %q: %w", c, err)
+		}
+		out[i] = enc
+	}
+	return out, nil
 }
 
 // PrimaryKey returns the db column name of T's first primary-key column, if any.
