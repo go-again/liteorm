@@ -5,8 +5,8 @@ go 1.25.0
 require (
 	gosqlite.org v0.12.0
 	gosqlite.org/vfs/vault v0.12.0
-	liteorm.org v0.12.0
-	liteorm.org/dialect/sqlite v0.12.0
+	liteorm.org v0.13.0
+	liteorm.org/dialect/sqlite v0.13.0
 )
 
 require (
@@ -20,6 +20,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	gosqlite.org/crypto/keyring v0.12.0 // indirect
 	gosqlite.org/vfs/crypto v0.12.0 // indirect

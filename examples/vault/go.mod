@@ -4,8 +4,8 @@ go 1.25.7
 
 require (
 	gosqlite.org v0.12.0
-	liteorm.org v0.12.0
-	liteorm.org/dialect/sqlite/vault v0.12.0
+	liteorm.org v0.13.0
+	liteorm.org/dialect/sqlite/vault v0.13.0
 )
 
 require (
@@ -23,7 +23,7 @@ require (
 	gosqlite.org/crypto/keyring v0.12.0 // indirect
 	gosqlite.org/vfs/crypto v0.12.0 // indirect
 	gosqlite.org/vfs/vault v0.12.0 // indirect
-	liteorm.org/dialect/sqlite v0.12.0 // indirect
+	liteorm.org/dialect/sqlite v0.13.0 // indirect
 	lukechampine.com/adiantum v1.1.1 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

@@ -3,8 +3,8 @@ module liteorm.org/examples/blog
 go 1.25.0
 
 require (
-	liteorm.org v0.12.0
-	liteorm.org/dialect/sqlite v0.8.0
+	liteorm.org v0.13.0
+	liteorm.org/dialect/sqlite v0.13.0
 )
 
 require (

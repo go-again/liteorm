@@ -3,12 +3,12 @@ module liteorm.org/conformance
 go 1.25.7
 
 require (
-	liteorm.org v0.12.0
-	liteorm.org/dialect/mssql v0.8.0
-	liteorm.org/dialect/mysql v0.8.0
-	liteorm.org/dialect/postgres v0.8.0
-	liteorm.org/dialect/sqlite v0.8.0
-	liteorm.org/gen v0.8.0
+	liteorm.org v0.13.0
+	liteorm.org/dialect/mssql v0.13.0
+	liteorm.org/dialect/mysql v0.13.0
+	liteorm.org/dialect/postgres v0.13.0
+	liteorm.org/dialect/sqlite v0.13.0
+	liteorm.org/gen v0.13.0
 )
 
 require (

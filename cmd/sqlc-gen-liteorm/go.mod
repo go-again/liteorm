@@ -4,10 +4,10 @@ go 1.25.7
 
 require (
 	google.golang.org/protobuf v1.36.11
-	liteorm.org/gen v0.9.0
+	liteorm.org/gen v0.13.0
 )
 
-require liteorm.org v0.9.0 // indirect
+require liteorm.org v0.13.0 // indirect
 
 replace liteorm.org/gen => ../../gen
 
