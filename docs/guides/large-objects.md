@@ -28,7 +28,7 @@ orm.AutoMigrate[File](ctx, db) // creates `files` and provisions the `files_cont
 
 ## Compression
 
-Add `compress=<level>` to the `lob` tag to store content compressed at rest — `lob:"chunk=1m;compress=better"`. The levels run `fastest`, `fast`, `default`, `better`, `best` (a bare `compress` means `default`); the underlying codec is abstracted away. Like the chunk size, the mode is frozen per object when it is created, and reads are mode-agnostic — so raw and compressed objects coexist in one store, and turning compression on for a model never breaks the objects already written under it.
+Add `compress=<level>` to the `lob` tag to store content compressed at rest — `lob:"chunk=1m;compress=better"`. The levels run `fastest`, `fast`, `default`, `better`, `best` (a bare `compress` means `default`); the underlying compression algorithm is abstracted away. Like the chunk size, the mode is frozen per object when it is created, and reads are mode-agnostic — so raw and compressed objects coexist in one store, and turning compression on for a model never breaks the objects already written under it.
 
 Compression trades CPU and memory for storage, and it changes the I/O profile: a compressed object cannot use in-place incremental BLOB I/O, so a read decompresses a whole chunk and a partial write read-modify-writes one (a write that covers a full chunk skips the read). That makes it a good fit for write-once or sequentially-streamed compressible content — files, logs, JSON — and a poor one for already-compressed payloads or hot random partial updates. Prefer a larger chunk size when compressing, and note that compression composes with [at-rest encryption](encryption.md): content is compressed first, then the pages are encrypted.
 
@@ -66,11 +66,42 @@ lob.Drop(ctx, db, f, "Content")             // free the content; field resets to
 
 `WriteAt` offsets may be written in any order, and gaps are sparse — they read back as zeros — so a chunked upload that arrives out of order needs no reassembly buffer. `Read` of a field that was never written returns `lob.ErrNotAllocated` (treat it as empty content); `Size` of it returns zero.
 
+## More operations
+
+- **Per-object compression.** Pass `lob.WithCompression(orm.CompressionBest)` to `Open` (or `Truncate`) to set the at-rest compression of the object it allocates, overriding the field's tag default for that object only — raw and compressed objects coexist in one store. Change an existing object's level, or convert it raw↔compressed with content preserved, via `lob.SetCompression(ctx, db, &row, "Content", orm.CompressionBest)`.
+- **Stat.** `lob.Stat(ctx, db, &row, "Content")` returns a `lob.Info`: logical `Size`, on-disk `StoredBytes`, the compression `Ratio` / `Level` / `Compressed`, the object's `ChunkSize`, and the `UniqueBytes` / `SharedBytes` split that shows how much a clone shares.
+- **Clone.** `lob.Clone(ctx, db, &dst, &src, "Content")` makes `dst`'s content a copy-on-write copy of `src`'s — O(metadata), no bytes copied; the two share storage until one is written. A cheap "duplicate this asset."
+- **Write from a reader.** `lob.WriteFrom(ctx, db, &row, "Content", r)` streams an `io.Reader` straight into the object in one engine transaction (allocating on first use) — the "save this upload" one-liner. `lob.WriteFromTx` is its in-transaction variant.
+- **Versioning.** `lob.NewVersion(ctx, db, &row, "Content", lob.WithLabel("v1"))` snapshots the current content as an immutable version; `lob.ListVersions` enumerates them, `lob.OpenVersion(…, n)` reads one back. Bound history with a retention policy — `lob.SetRetention(ctx, db, &row, "Content", lob.Policy{KeepVersions: 5})`, `lob.Prune` to enforce it now, or set the default at allocation with the `lob.WithVersioning(lob.Policy{…})` option.
+- **Deduplication.** Tag a field `lob:"dedup"` (or set it per database with `orm.WithLOBDedup`) to enable content-addressed block dedup for its store: objects (and versions/clones) that share identical, full-chunk, compressed blocks store them once. It is a store-wide setting fixed at the store's first open.
+- **Compression utility.** `lob.Compress(b, orm.CompressionBest)` / `lob.Decompress(b, maxSize)` expose the store's byte compression for compressing your own small values to put in an ordinary column — self-describing output (incompressible input falls back to verbatim), independent of the streaming machinery. (This is byte compression, not a [field codec](field-codecs.md) — for transparent per-column encode/decode use the `codec:` tag.) A non-positive `maxSize` means no decompression cap.
+
+## Transactions
+
+By default a content write commits on its own pooled connection, **outside** any ORM transaction — so streamed content survives an ORM-transaction rollback and vice versa, and the natural pattern is *stream the bytes, then commit the metadata*. When you need the row write and the content write to be **atomic**, use `lob.InTx`: it pins one connection and runs both on a single transaction, so they commit or roll back together.
+
+```go
+err := lob.InTx(ctx, db, func(tx *lob.Tx) error {
+	f := &File{Path: "/a"}
+	if err := orm.NewRepo[File](tx.Session()).Create(ctx, f); err != nil {
+		return err
+	}
+	w, err := lob.OpenTx(ctx, tx, f, "Content")
+	if err != nil {
+		return err
+	}
+	_, err = w.WriteAt(data, 0)
+	return err // a returned error rolls back BOTH the row and the content
+})
+```
+
+Run `AutoMigrate` before the first `InTx` (so the store is provisioned) and keep the pool above one connection (the default), since the transaction holds one for its duration. `lob.DropTx` deletes a row's content inside the transaction, for an atomic row+content delete.
+
 ## Lifecycle
 
 A few properties follow from the engine borrowing a pooled connection per operation, and are worth designing around:
 
-- **Content writes are not part of the ORM transaction.** Each write commits on its own connection, so written content survives an ORM-transaction rollback and vice versa. The supported pattern is to *stream the bytes, then commit the metadata* — the natural order for uploads and files. Don't rely on a `Repo` transaction to undo content already written.
+- **Content writes are not part of the ORM transaction by default.** A plain `lob.Open` write commits on its own connection (see [Transactions](#transactions) above); use `lob.InTx` when the row and the content must be atomic.
 - **Free content on hard-delete.** Deleting the row does not delete its content. Call `lob.Drop` when you hard-delete a row — typically from a `BeforeDelete` hook on the model. A soft-deleted row keeps its content, so `Restore` still has it; only a hard delete should drop.
 - **Allocation is leak-tolerant.** The id is allocated on the first write and persisted by a follow-up update; a crash in that narrow window leaves an orphaned content object — wasted space, never corruption — and `Open` already best-effort-frees the object if the persist fails.
 - **The import is required.** A model with a large-object field that is migrated without importing `liteorm.org/dialect/sqlite/lob` fails `AutoMigrate` loudly, naming the missing import, rather than silently skipping the content store.

@@ -8,9 +8,9 @@ use (
 	./dialect/mysql
 	./dialect/postgres
 	./dialect/sqlite
+	./dialect/sqlite/vault
 	./examples/blog
 	./examples/codegen
-	./examples/compressed
 	./examples/encryption
 	./examples/fixtures
 	./examples/gormport
@@ -21,5 +21,6 @@ use (
 	./examples/queries
 	./examples/query
 	./examples/search
+	./examples/vault
 	./gen
 )

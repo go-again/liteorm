@@ -179,16 +179,17 @@ func TestLOB_Compressed(t *testing.T) {
 	}
 
 	// Prove compression actually engaged — a round-trip alone would pass even if
-	// the codec were a silent no-op. The object's frozen codec must be non-raw,
-	// and the physical bytes stored across its chunks must be smaller than the
-	// logical length for this highly-compressible payload.
-	id := got.Content.ID()
-	if codec := scalarInt(t, db, fmt.Sprintf("SELECT codec FROM cdocs_content_objects WHERE id=%d", id)); codec == 0 {
-		t.Fatalf("object codec = 0 (raw); compression did not engage")
+	// the codec were a silent no-op. Stat reports the object as compressed and its
+	// on-disk bytes as smaller than the logical length for this compressible payload.
+	info, err := lob.Stat(ctx, db, &got, "Content")
+	if err != nil {
+		t.Fatal(err)
 	}
-	stored := scalarInt(t, db, fmt.Sprintf("SELECT COALESCE(SUM(LENGTH(data)),0) FROM cdocs_content_chunks WHERE obj=%d", id))
-	if stored == 0 || stored >= int64(len(want)) {
-		t.Fatalf("stored bytes = %d, want >0 and < logical %d (content was not compressed)", stored, len(want))
+	if !info.Compressed {
+		t.Fatal("Stat reports the object as not compressed; compression did not engage")
+	}
+	if info.StoredBytes == 0 || info.StoredBytes >= info.Size {
+		t.Fatalf("StoredBytes = %d, want in (0, Size=%d) — content was not compressed", info.StoredBytes, info.Size)
 	}
 }
 

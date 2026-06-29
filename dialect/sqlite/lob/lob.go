@@ -42,7 +42,7 @@ func provision(ctx context.Context, sess liteorm.Session, store string, opts orm
 	if !ok {
 		return ErrUnsupportedBackend
 	}
-	_, err := storeFor(g, store, opts.ChunkSize, opts.Compression)
+	_, err := storeFor(g, store, opts.ChunkSize, opts.Compression, opts.Dedup)
 	return err
 }
 
@@ -62,7 +62,7 @@ type cacheKey struct {
 // Store that allocates new objects (both are frozen per object at Create), so a
 // Writer that may allocate must open with them. A store name maps to exactly one
 // column, so caching by (db, name) is sound.
-func storeFor(g *gosqlite.DB, name string, chunkSize int, compression orm.Compression) (*blobstore.Store, error) {
+func storeFor(g *gosqlite.DB, name string, chunkSize int, compression orm.Compression, dedup bool) (*blobstore.Store, error) {
 	key := cacheKey{db: g, name: name}
 	if v, ok := storeCache.Load(key); ok {
 		return v.(*blobstore.Store), nil
@@ -74,12 +74,20 @@ func storeFor(g *gosqlite.DB, name string, chunkSize int, compression orm.Compre
 	if compression != orm.CompressionNone {
 		opts = append(opts, blobstore.WithCompression(toBlobstoreCompression(compression)))
 	}
+	if dedup {
+		opts = append(opts, blobstore.WithDedup())
+	}
 	st, err := blobstore.Open(g, name, opts...)
 	if err != nil {
 		return nil, err
 	}
 	actual, _ := storeCache.LoadOrStore(key, st)
 	return actual.(*blobstore.Store), nil
+}
+
+// storeForField is storeFor with the options taken from a resolved field binding.
+func storeForField(g *gosqlite.DB, b binding) (*blobstore.Store, error) {
+	return storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression, b.lf.Dedup)
 }
 
 // toBlobstoreCompression maps the backend-neutral orm.Compression onto the
@@ -133,21 +141,29 @@ func bind[T any](field string) (binding, error) {
 	return binding{store: orm.LOBStoreName(s.Table, lf.Column), lf: lf, pkCol: s.PK.Column, pkIndex: s.PK.Index}, nil
 }
 
+// creator is the minimal allocation surface ensure needs, satisfied by both a
+// pooled *blobstore.Store and a transaction-joining *blobstore.ConnStore.
+type creator interface {
+	Create(ctx context.Context, opts ...blobstore.CreateOption) (int64, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 // ensure returns the object id for the field, allocating (and persisting back to
-// the row) one on first access.
-func ensure[T any](ctx context.Context, sess liteorm.Session, st *blobstore.Store, rv reflect.Value, b binding) (int64, error) {
+// the row) one on first access. The id-writeback runs through sess, so when sess
+// is a transaction-bound session the writeback joins that transaction.
+func ensure[T any](ctx context.Context, sess liteorm.Session, c creator, rv reflect.Value, b binding, createOpts ...blobstore.CreateOption) (int64, error) {
 	fv := rv.FieldByIndex(b.lf.Index)
 	if id := fv.Int(); id != 0 {
 		return id, nil
 	}
-	id, err := st.Create(ctx)
+	id, err := c.Create(ctx, createOpts...)
 	if err != nil {
 		return 0, err
 	}
 	pkv := rv.FieldByIndex(b.pkIndex).Interface()
 	pkRef := string(sess.Dialect().QuoteIdent(nil, b.pkCol))
 	if _, err := query.Update[T](sess).Set(b.lf.Column, id).Where(pkRef+" = ?", pkv).Exec(ctx); err != nil {
-		_ = st.Delete(ctx, id) // best-effort: don't leak the object we just created
+		_ = c.Delete(ctx, id) // best-effort: don't leak the object we just created
 		return 0, fmt.Errorf("lob: persist object id: %w", err)
 	}
 	fv.SetInt(id)
@@ -156,8 +172,10 @@ func ensure[T any](ctx context.Context, sess liteorm.Session, st *blobstore.Stor
 
 // Open returns an io.WriterAt+io.Closer over the row's large-object content,
 // allocating the backing object (and writing its id back into row) on first use.
-// Offsets may be written in any order; gaps are sparse.
-func Open[T any](ctx context.Context, sess liteorm.Session, row *T, field string) (*blobstore.Writer, error) {
+// Offsets may be written in any order; gaps are sparse. A WithCompression option
+// sets the at-rest compression of the object allocated on first use, overriding
+// the field's tag default for that object only.
+func Open[T any](ctx context.Context, sess liteorm.Session, row *T, field string, opts ...Option) (*blobstore.Writer, error) {
 	g, ok := sqlite.Conn(sess)
 	if !ok {
 		return nil, ErrUnsupportedBackend
@@ -166,11 +184,11 @@ func Open[T any](ctx context.Context, sess liteorm.Session, row *T, field string
 	if err != nil {
 		return nil, err
 	}
-	st, err := storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression)
+	st, err := storeForField(g, b)
 	if err != nil {
 		return nil, err
 	}
-	id, err := ensure[T](ctx, sess, st, reflect.ValueOf(row).Elem(), b)
+	id, err := ensure[T](ctx, sess, st, reflect.ValueOf(row).Elem(), b, collect(opts).createOpts()...)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +210,7 @@ func Read[T any](ctx context.Context, sess liteorm.Session, row *T, field string
 	if id == 0 {
 		return nil, ErrNotAllocated
 	}
-	st, err := storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression)
+	st, err := storeForField(g, b)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +231,7 @@ func Size[T any](ctx context.Context, sess liteorm.Session, row *T, field string
 	if id == 0 {
 		return 0, nil
 	}
-	st, err := storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression)
+	st, err := storeForField(g, b)
 	if err != nil {
 		return 0, err
 	}
@@ -221,8 +239,9 @@ func Size[T any](ctx context.Context, sess liteorm.Session, row *T, field string
 }
 
 // Truncate sets the row's content to exactly size bytes (growing sparsely or
-// shrinking), allocating the object first if needed.
-func Truncate[T any](ctx context.Context, sess liteorm.Session, row *T, field string, size int64) error {
+// shrinking), allocating the object first if needed. A WithCompression option
+// sets the at-rest compression of the object if this call is what allocates it.
+func Truncate[T any](ctx context.Context, sess liteorm.Session, row *T, field string, size int64, opts ...Option) error {
 	g, ok := sqlite.Conn(sess)
 	if !ok {
 		return ErrUnsupportedBackend
@@ -235,11 +254,11 @@ func Truncate[T any](ctx context.Context, sess liteorm.Session, row *T, field st
 	if size == 0 && rv.FieldByIndex(b.lf.Index).Int() == 0 {
 		return nil // already empty + unallocated
 	}
-	st, err := storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression)
+	st, err := storeForField(g, b)
 	if err != nil {
 		return err
 	}
-	id, err := ensure[T](ctx, sess, st, rv, b)
+	id, err := ensure[T](ctx, sess, st, rv, b, collect(opts).createOpts()...)
 	if err != nil {
 		return err
 	}
@@ -264,7 +283,7 @@ func Drop[T any](ctx context.Context, sess liteorm.Session, row *T, field string
 	if id == 0 {
 		return nil
 	}
-	st, err := storeFor(g, b.store, b.lf.ChunkSize, b.lf.Compression)
+	st, err := storeForField(g, b)
 	if err != nil {
 		return err
 	}

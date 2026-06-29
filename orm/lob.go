@@ -65,6 +65,7 @@ type LOBField struct {
 	Index       []int
 	ChunkSize   int         // 0 = backend default
 	Compression Compression // CompressionNone = store raw (default)
+	Dedup       bool        // content-addressed block deduplication for the store
 }
 
 // LOBProvisionOptions are the backend-neutral knobs for provisioning one LOB
@@ -73,6 +74,7 @@ type LOBField struct {
 type LOBProvisionOptions struct {
 	ChunkSize   int
 	Compression Compression
+	Dedup       bool
 }
 
 // lobProvisioner is installed by a backend that can provision object stores
@@ -113,7 +115,7 @@ func provisionLOBs(ctx context.Context, sess liteorm.Session, s *Schema, cfg mig
 	}
 	for _, lf := range s.LOBFields {
 		// Tag is the default; AutoMigrate's WithLOB* options override per field.
-		opts := LOBProvisionOptions{ChunkSize: lf.ChunkSize, Compression: lf.Compression}
+		opts := LOBProvisionOptions{ChunkSize: lf.ChunkSize, Compression: lf.Compression, Dedup: lf.Dedup}
 		for _, mut := range cfg.lobOverrides[lf.GoName] {
 			mut(&opts)
 		}
@@ -182,6 +184,12 @@ func lobOptions(sf reflect.StructField) (LOBField, error) {
 				return lf, fmt.Errorf("orm: LOB field %q: bad compress level %q: %w", sf.Name, v, err)
 			}
 			lf.Compression = c
+		case "dedup":
+			b, err := parseBool(strings.TrimSpace(v), hasVal)
+			if err != nil {
+				return lf, fmt.Errorf("orm: LOB field %q: bad dedup value %q: %w", sf.Name, v, err)
+			}
+			lf.Dedup = b
 		default:
 			return lf, fmt.Errorf("orm: LOB field %q: unknown lob option %q", sf.Name, k)
 		}
@@ -236,5 +244,21 @@ func parseCompression(v string, hasVal bool) (Compression, error) {
 		return CompressionBest, nil
 	default:
 		return CompressionNone, fmt.Errorf("want none|fastest|fast|default|better|best")
+	}
+}
+
+// parseBool reads a boolean tag value. A bare flag (no '=') is true; otherwise
+// on|true|yes|1 → true and off|false|no|0 → false.
+func parseBool(v string, hasVal bool) (bool, error) {
+	if !hasVal {
+		return true, nil
+	}
+	switch strings.ToLower(v) {
+	case "", "on", "true", "yes", "1":
+		return true, nil
+	case "off", "false", "no", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("want on|off")
 	}
 }

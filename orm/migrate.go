@@ -73,6 +73,16 @@ func WithLOBCompression(field string, c Compression) MigrateOption {
 	}
 }
 
+// WithLOBDedup enables or disables content-addressed block deduplication for the
+// named orm.LOB field's store when AutoMigrate provisions it, overriding the
+// `lob:"dedup"` tag. Dedup is a store-wide setting fixed at the store's first open
+// (see WithLOBChunkSize for the per-database / first-open semantics).
+func WithLOBDedup(field string, dedup bool) MigrateOption {
+	return func(c *migrateConfig) {
+		c.addLOBOverride(field, func(o *LOBProvisionOptions) { o.Dedup = dedup })
+	}
+}
+
 func (c *migrateConfig) addLOBOverride(field string, mut func(*LOBProvisionOptions)) {
 	if c.lobOverrides == nil {
 		c.lobOverrides = map[string][]func(*LOBProvisionOptions){}

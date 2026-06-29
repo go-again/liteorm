@@ -49,9 +49,19 @@ lob.Drop(ctx, db, f, "Content")             // free the content; resets the fiel
 - `WriteAt` offsets may be written in any order; gaps are sparse (read back as zeros). Each `WriteAt` is durable on return.
 - `Read` of a field never written returns `lob.ErrNotAllocated` (treat as empty). `Size` of it returns `0`.
 
+## More operations
+
+- **Per-object compression:** `lob.Open(ctx, db, f, "Content", lob.WithCompression(orm.CompressionBest))` sets one object's level (overrides the tag; raw + compressed coexist). `lob.SetCompression(ctx, db, &f, "Content", c)` changes/converts an existing object (content preserved).
+- **`lob.Stat(ctx, db, &f, "Content")`** → `lob.Info{Size, StoredBytes, UniqueBytes, SharedBytes, Ratio, ChunkSize, Compressed, Level}`.
+- **`lob.Clone(ctx, db, &dst, &src, "Content")`** — O(metadata) copy-on-write copy of a large object.
+- **`lob.WriteFrom(ctx, db, &row, "Content", r)`** — stream an `io.Reader` into the object (one txn); `lob.WriteFromTx` for the in-transaction variant.
+- **Versioning:** `lob.NewVersion(…, lob.WithLabel("v1"))`, `lob.ListVersions`, `lob.OpenVersion(…, n)`, `lob.SetRetention(…, lob.Policy{KeepVersions: N})` / `lob.Prune`; default retention at allocate via `lob.WithVersioning(lob.Policy{…})`.
+- **Dedup:** tag `lob:"dedup"` (or `orm.WithLOBDedup`) → content-addressed block dedup for the store (store-wide, fixed at first open).
+- **Atomic row+content:** `lob.InTx(ctx, db, func(tx *lob.Tx) error { … })` runs ORM writes via `tx.Session()` and content via `lob.OpenTx`/`lob.WriteFromTx`/`lob.DropTx` on one transaction — they commit/roll back together. AutoMigrate first; pool > 1 conn (default).
+
 ## Lifecycle & pitfalls
 
-- **Content writes are not in the ORM transaction.** The engine commits each write on its own pooled connection, so a content write survives an ORM-tx rollback and vice versa. The supported pattern is **stream bytes, then commit metadata** — which is the natural flow for uploads/files. Don't rely on a `Repo` transaction to roll back already-written content.
+- **Content writes are not in the ORM transaction by default.** A plain `lob.Open` write commits on its own pooled connection; use `lob.InTx` (above) when the row and content must be atomic. Default pattern otherwise: **stream bytes, then commit metadata**.
 - **Free content on hard-delete.** Deleting the row does not delete its content. Call `lob.Drop` when you hard-delete — typically from a `BeforeDelete` hook on the model. Soft-delete keeps the content (so `Restore` still has it); only hard-delete should `Drop`.
 - **Allocation is leak-tolerant.** The id is allocated on first write and persisted by a follow-up update; a crash in that window leaves an orphaned content object (wasted space, never corruption). `Open` best-effort-frees the object if the persist fails.
 - **Import is required.** A model with a LOB field that is migrated without importing `liteorm.org/dialect/sqlite/lob` fails `AutoMigrate` loudly (it names the missing import) rather than silently skipping the content store.
